@@ -1,3 +1,4 @@
+
 #include <WiFi.h>
 #include <WebServer.h>
 
@@ -89,3 +90,87 @@ void handle_downloadData() {
 } */
 
 //void handle_.....
+
+/*void handle_led1on() {
+  LED1status = HIGH;
+  Serial.println("GPIO4 Status: ON");
+  server.send(200, "text/html", SendHTML(...));  //200=OK
+}*/
+
+/*void handle_led1off() {
+  LED1status = LOW;
+  Serial.println("GPIO4 Status: OFF");
+  server.send(200, "text/html", SendHTML(....)); 
+}*/
+
+void handle_NotFound(){
+  server.send(404, "text/plain", "Not found");
+}
+
+String SendHTML_Download (uint8_t scanData) {
+  String ptr = "<!DOCTYPE html> <html>\n";
+  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
+  ptr +="<title>Download Measurement Data</title>\n";  //title page w/ <title>-tag
+
+  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n"; //Desgin & Layout
+  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h2 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";  //Layout
+
+  ptr +=".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n"; //Button design allgemein
+  ptr +=".button-on {background-color: #3498db;}\n"; //button aussehen
+  ptr +=".button-on:active {background-color: #2980b9;}\n"; //button wenn geklickt
+
+  ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n"; //Layout
+  ptr +="</style>\n";
+  ptr +="</head>\n";
+  ptr +="</body>\n";
+
+  ptr +="<h1>3D-LaserScanner by mst2.se2 students</h1>\n";  //Webpage headings..
+   ptr +="<h2>Hier Matlab-Code ausgabe:</h2>\n"; //AUSGABE MATLAB-CODE
+
+  if(scanData)
+  {ptr +="<p>Generated</p><a class=\"button button-off\" href=\"/download\">OFF</a>\n";}
+  else
+  {ptr +="<p>Generate MatLab-Code from completed Measurement: ON</p><a class=\"button button-on\" href=\"/start\">ON</a>\n";}
+
+  ptr +="</body>\n";
+  ptr +="</html>\n";
+  return ptr;
+}
+
+
+String SendHTML(uint8_t scanStat,uint8_t scanProg){ //generiert Seite für entsprechenden handle-> für verschiedene Zwecke neuen SEndHTML, download data and progress displaying
+  String ptr = "<!DOCTYPE html> <html>\n";  //indicates that  HTML-Code will be sent in the follwing  
+  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
+  ptr +="<title>Scanner measurements</title>\n";  //title page w/ <title>-tag
+
+  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n"; //Desgin Einstellungen Webpage
+  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h2 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";  //Layout
+  
+  ptr +=".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n"; //Button design allgemein
+  ptr +=".button-on {background-color: #3498db;}\n"; //button aussehen
+  ptr +=".button-on:active {background-color: #2980b9;}\n"; //button wenn geklickt
+
+  ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n"; //Layout
+
+  ptr +="</style>\n";
+  ptr +="</head>\n";
+  ptr +="</body>\n";
+
+  ptr +="<h1>3D-LaserScanner by mst2.se2 students</h1>\n";  //Webpage headings..
+   ptr +="<h2>Web Application Using Access Point(AP) Mode From ESP32 WROOM</h2>\n";
+    ptr +="<h3>Current Scan Status:</h3>\n";
+  
+  if(scanStat)
+  {ptr +="<p>Generate MatLab-Code from completed Measurement: ON</p><a class=\"button button-on\" href=\"/download\">OFF</a>\n";} //diesen teil erst nachdem SCAN_prog fertig ist ->ANPASSEN
+  else
+  {ptr +="<p>LED1 Status: OFF</p><a class=\"button button-off\" href=\"/led1on\">ON</a>\n";} //->ANPASSEN
+
+  //if(scanProg)
+  //{//ptr +="<p>LED2 Status: ON</p><a class=\"button button-off\" href=\"/led2off\">OFF</a>\n";} -> ANPASSEN
+  //else
+  //{//ptr +="<p>LED2 Status: OFF</p><a class=\"button button-on\" href=\"/led2on\">ON</a>\n";} -> ANPASSEN
+
+  ptr +="</body>\n";
+  ptr +="</html>\n";
+  return ptr;
+}
