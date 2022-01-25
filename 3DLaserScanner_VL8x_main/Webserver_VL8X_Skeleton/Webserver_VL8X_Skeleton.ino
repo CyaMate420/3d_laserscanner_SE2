@@ -17,7 +17,8 @@ WebServer server(80);                 //default HTTP-Port
 //
 // e.g.: 
 //
-
+int SCAN_status = 0;
+int SCAN_data = 0;
 
 //Adafruit_VL6180X vl = Adafruit_VL6180X();  startet Lib-methoden und funktionen
 
@@ -77,8 +78,8 @@ void handle_OnConnect() {
 
 void handle_downloadData() {
   //var SCAN_data init & nutzung usw... mit abfrage Messdaten und Ausgabe
-  SCAN_data = 1;
-  server.send(200, "text/html", SendHTML(SCAN_Data)); --> Neue SendHTML_download nötig 
+  SCAN_data = 1; //zum Test -> entspricht Scan ist fertig
+  server.send(200, "text/html", SendHTML_Download(SCAN_data)); //--> Neue SendHTML_download nötig 
 } 
 
 /*void handle_scanFinished() {
@@ -128,7 +129,7 @@ String SendHTML_Download (uint8_t scanData) {
    ptr +="<h2>Hier Matlab-Code ausgabe:</h2>\n"; //AUSGABE MATLAB-CODE
 
   if(scanData)
-  {ptr +="<p>Generated</p><a class=\"button button-off\" href=\"/download\">OFF</a>\n";}
+  {ptr +="<p>Generated</p><a class=\"button button-on\" href=\"/download\">New Scan?</a>\n";} //"download" mit scan_start oder progress Seite ersetzen 
   else
   {ptr +="<p>Generate MatLab-Code from completed Measurement: ON</p><a class=\"button button-on\" href=\"/start\">ON</a>\n";}
 
@@ -138,7 +139,7 @@ String SendHTML_Download (uint8_t scanData) {
 }
 
 
-String SendHTML(uint8_t scanStat,uint8_t scanProg){ //generiert Seite für entsprechenden handle-> für verschiedene Zwecke neuen SEndHTML, download data and progress displaying
+String SendHTML(uint8_t scanStat){ //generiert Seite für entsprechenden handle-> für verschiedene Zwecke neuen SEndHTML, download data and progress displaying
   String ptr = "<!DOCTYPE html> <html>\n";  //indicates that  HTML-Code will be sent in the follwing  
   ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
   ptr +="<title>Scanner measurements</title>\n";  //title page w/ <title>-tag
@@ -160,8 +161,8 @@ String SendHTML(uint8_t scanStat,uint8_t scanProg){ //generiert Seite für entsp
    ptr +="<h2>Web Application Using Access Point(AP) Mode From ESP32 WROOM</h2>\n";
     ptr +="<h3>Current Scan Status:</h3>\n";
   
-  if(scanStat)
-  {ptr +="<p>Generate MatLab-Code from completed Measurement: ON</p><a class=\"button button-on\" href=\"/download\">OFF</a>\n";} //diesen teil erst nachdem SCAN_prog fertig ist ->ANPASSEN
+  if(scanStat) //Erst so anzeigen wenn Scan ab geschlossen ist -> momentan nur Test
+  {ptr +="<p>Generate MatLab-Code from completed Measurement: Ready</p><a class=\"button button-on\" href=\"/download\">Ready</a>\n";} //diesen teil erst nachdem SCAN_prog fertig ist ->ANPASSEN
   else
   {ptr +="<p>LED1 Status: OFF</p><a class=\"button button-off\" href=\"/led1on\">ON</a>\n";} //->ANPASSEN
 
