@@ -2,6 +2,14 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
+//#include <Wire.h>
+//#include <Adafruit_VL6180X.h>
+//#include <LiquidCrystal.h>
+//#include <Stepper.h>
+//#include <WiFi.h>
+//#include <WebServer.h>
+//#include <AccelStepper.h>
+
 /*______________Setup Server on ESP_______________________________________________________ */
 
 //_______________Define-Constants_______________________________________
@@ -13,9 +21,17 @@ IPAddress gateway(192,168,1,1);
 IPAddress subnet(255,255,255,0); 
 WebServer server(80);                 //default HTTP-Port
 
+#define POLLING 50
+#define BUTTON  5
+#define STEP_PIN 32
+#define DIR_PIN  33
+
+#define STEPS_PER_REV 200        // the number of steps in one revolution of your motor (28BYJ-48)
+#define MEASUREMENTS_PER_REV    200
+#define D_REF   80               //Abstand Sensor Drehscheibe Mittelpunkt
+#define STEPPER_SPEED 200          // delay between high/low of step signal
+
 //variables that will change:
-//
-// e.g.: 
 //
 int SCAN_status = 0;
 int SCAN_data = 0;
@@ -26,16 +42,24 @@ int SCAN_data = 0;
 //_________________________________SETUP_________________________________
 //***********************************************************************
 void setup() {
+  //Wire.begin();
   Serial.begin(115200);
-  //***********Setup Sensor etc..
+  
+  //***********VL68 init
 
-  //*******************************
+  //***********LCD init
 
-  //***setup Soft Access Point für Webserver-Host auf ESP -> into: softAP_init()
+  
+  //*********STepper init
+
+    
+  //*********Button
+
+    
+ //**********setup Soft Access Point für Webserver-Host auf ESP -> into: softAP_init()
   WiFi.softAP(ssid, password);
   WiFi.softAPConfig(local_ip, gateway, subnet);
   delay(100);
-  //***************************
 
   //**********Server_handles aufrufen-> into: ON_2_handles()
   server.on("/", handle_OnConnect);     //request nach /root abfangen; führt zu Start der StartUp/Kalibrierung im Code
@@ -44,10 +68,10 @@ void setup() {
   //server.on("/led2on", handle_led1on);
   //server.on("/led2off", handle_led1off);
   server.onNotFound(handle_NotFound); //ungültige URL liefert E404
-  //****************************
-
+ 
   server.begin();
   Serial.println("HTTP server started");
+  
 }
 
 
@@ -140,6 +164,7 @@ String SendHTML_Download (uint8_t scanData) {
 
 
 String SendHTML(uint8_t scanStat){ //generiert Seite für entsprechenden handle-> für verschiedene Zwecke neuen SEndHTML, download data and progress displaying
+  
   String ptr = "<!DOCTYPE html> <html>\n";  //indicates that  HTML-Code will be sent in the follwing  
   ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
   ptr +="<title>Scanner measurements</title>\n";  //title page w/ <title>-tag
@@ -161,7 +186,7 @@ String SendHTML(uint8_t scanStat){ //generiert Seite für entsprechenden handle-
    ptr +="<h2>Web Application Using Access Point(AP) Mode From ESP32 WROOM</h2>\n";
     ptr +="<h3>Current Scan Status:</h3>\n";
   
-  if(scanStat) //Erst so anzeigen wenn Scan ab geschlossen ist -> momentan nur Test
+  if(scanStat) //Erst so anzeigen wenn Scan abgeschlossen ist -> momentan nur Test
   {ptr +="<p>Generate MatLab-Code from completed Measurement: Ready</p><a class=\"button button-on\" href=\"/download\">Ready</a>\n";} //diesen teil erst nachdem SCAN_prog fertig ist ->ANPASSEN
   else
   {ptr +="<p>LED1 Status: OFF</p><a class=\"button button-off\" href=\"/led1on\">ON</a>\n";} //->ANPASSEN
