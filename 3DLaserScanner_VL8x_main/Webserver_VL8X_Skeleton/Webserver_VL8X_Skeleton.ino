@@ -21,23 +21,11 @@ IPAddress gateway(192,168,1,1);
 IPAddress subnet(255,255,255,0); 
 WebServer server(80);                 //default HTTP-Port
 
-#define POLLING 50
-#define BUTTON  5
-#define STEP_PIN 32
-#define DIR_PIN  33
-
-#define STEPS_PER_REV 200        // the number of steps in one revolution of your motor (28BYJ-48)
-#define MEASUREMENTS_PER_REV    200
-#define D_REF   80               //Abstand Sensor Drehscheibe Mittelpunkt
-#define STEPPER_SPEED 200          // delay between high/low of step signal
-
-//variables that will change:
-//
-int SCAN_status = 0;
-int SCAN_data = 0;
 
 //Adafruit_VL6180X vl = Adafruit_VL6180X();  startet Lib-methoden und funktionen
 
+typedef enum scanState_from_server {ROOT_PREPARING, READY, SCAN, DOWNLOAD} Scan_state; //verschiedenen Phasen der Scan Procedure
+Scan_state serverState = -1;   //globale Variable zum Abfragen der States im Programm 
 
 //_________________________________SETUP_________________________________
 //***********************************************************************
@@ -62,9 +50,11 @@ void setup() {
   delay(100);
 
   //**********Server_handles aufrufen-> into: ON_2_handles()
-  server.on("/", handle_OnConnect);     //request nach /root abfangen; führt zu Start der StartUp/Kalibrierung im Code
-  //server.on("/start", handle_startScan); ->zum start scan
-  server.on("/download", handle_downloadData);  //-> measurements herunterladen
+  server.on("/", handle_OnConnect);           //Landing-Page und INfos über Preparing zustand
+  server.on("/ready", handle_Ready4Scan);     //after finishing Scanner preparing-> start scan here with serverButton (Start Scan) click oder hardwareButton
+  server.on("/running", handle_RunningScan)   //showing Scan progress and generating button to copy MatLab-Code from next page
+  server.on("/download", handle_DownloadData);  //displaying MatLab Code with measurements to "download" (copy-paste) - also: restart whole procedure
+  
   //server.on("/led2on", handle_led1on);
   //server.on("/led2off", handle_led1off);
   server.onNotFound(handle_NotFound); //ungültige URL liefert E404
@@ -89,10 +79,9 @@ void loop() {
 void handle_OnConnect() {
   //HIER: Start conditions
   Serial.println("Start WebServer zur Kommunikation mit 3D-Laserscanner");
-  //SCAN_status from button click Pin???
-  SCAN_status = 1;
+  scanState = ROOT_PREPARE;
   //SCAN_prog from number of stepps
-  server.send(200, "text/html", SendHTML(SCAN_status)); // SendHTML um Seite für entsprechende Zustände zu generieren
+  server.send(200, "text/html", SendHTML(scanState)); // SendHTML um Seite für entsprechende Zustände zu generieren
   //Hier Ausgabe an Bildschirm mit Startup und Initialisierung..
 }
 
@@ -132,7 +121,7 @@ void handle_NotFound(){
   server.send(404, "text/plain", "Not found");
 }
 
-String SendHTML_Download (uint8_t scanData) {
+String SendHTML_Download (scan_state scanData) {
   String ptr = "<!DOCTYPE html> <html>\n";
   ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
   ptr +="<title>Download Measurement Data</title>\n";  //title page w/ <title>-tag
