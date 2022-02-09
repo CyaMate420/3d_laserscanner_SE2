@@ -52,8 +52,8 @@ WebServer server(80);                 //default HTTP-Port
 //motor defines 
 #define CLOCKWISE           1
 #define COUNTERCLOCKWISE    0
-#define UP                  1           // ausprobieren 
-#define DOWN                0           // ausprobieren 
+#define UP                  1           
+#define DOWN                0            
 
 // customazable defines
 #define HEIGHT_STEP_SIZE            4           // 2mm height difference between two measured levels
@@ -68,6 +68,7 @@ WebServer server(80);                 //default HTTP-Port
 #define MEASUREMENTS_PER_ROTATION   (3600/ANGLE_STEP_SIZE_MUL10)         
 #define MEASURED_LEVELS             (MAX_HEIGHT/HEIGHT_STEP_SIZE)
 #define AMOUNT_MEASURED_POINTS      (MEASURED_LEVELS*MEASUREMENTS_PER_ROTATION) 
+#define DISTANCE_SENSOR_PLATE       25          //used for calibration
 
 //error-code defines
 #define NO_ERROR                0
@@ -81,9 +82,9 @@ WebServer server(80);                 //default HTTP-Port
 /***************************************************************************************************************/
 
 typedef struct scan_handle{                                     
-  uint16_t alpha_mul_10[MEASUREMENTS_PER_ROTATION*MEASURED_LEVELS];          // alpha*10  -> reduce information loss due to integer calculation 
-  uint16_t radius_mul_10[MEASUREMENTS_PER_ROTATION*MEASURED_LEVELS];         // radius*10 -> reduce information loss due to integer calculation 
-  uint8_t height[MEASUREMENTS_PER_ROTATION*MEASURED_LEVELS];                 // height in mm 
+  uint16_t alpha_mul_10[AMOUNT_MEASURED_POINTS];          // alpha*10  -> reduce information loss due to integer calculation 
+  uint16_t radius_mul_10[AMOUNT_MEASURED_POINTS];         // radius*10 -> reduce information loss due to integer calculation 
+  uint8_t height[AMOUNT_MEASURED_POINTS];                 // height in mm 
   uint8_t error;                                                             // saves Error Code when an error occurs. (NO_ERROR by default).
   uint    index;                                                             // Information about the current processed array data
 }scan_handle;
@@ -93,6 +94,7 @@ typedef struct scan_handle{
 typedef struct motor_handle{
   uint8_t step_pin;
   uint8_t dir_pin;
+  uint8_t speed;
 }motor_handle;
 
 
@@ -107,9 +109,9 @@ void scan_run(scan_handle* xy);
 void scan_finish(scan_handle* xy);
 void scan_error(scan_handle* xy);
 uint8_t button_state(void);
-uint8_t server_button_state(void);
+//uint8_t server_button_state(void);
 void measure_one_rotation(scan_handle* xy, uint8_t current_height);
-void step_motor(motor_handle* motor, uint8_t direction, uint8_t amount_of_steps);
+void step_motor(motor_handle* motor, uint8_t direction, uint16_t amount_of_steps);
 void display_scan_progress(uint8_t current_value, uint8_t max_value);
 void check_scan_error(scan_handle* xy);
 void transmit_matlab_code(scan_handle* xy);
@@ -121,14 +123,17 @@ void reset_scan_handle(scan_handle* xy);
 /***************************************************************************************************************/
 
 scan_handle current_scan = {{0}, {0}, {0}, NO_ERROR, 0};   // maybe init in loop ? -> faster access ?  
-motor_handle disc_motor = {STEP_PIN_1, DIR_PIN_1};
-motor_handle threaded_rod_motor = {STEP_PIN_2, DIR_PIN_2};
+motor_handle disc_motor = {STEP_PIN_1, DIR_PIN_1, 10};
+motor_handle threaded_rod_motor = {STEP_PIN_2, DIR_PIN_2, 10};
 LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);                // not sure if in setup or here ? -> test it 
 Adafruit_VL6180X vl = Adafruit_VL6180X();
+
+uint8_t scan_progress_global = 0;       //in Display_scan_progress
 
 typedef enum scanState_from_server {ROOT_PREPARING, READY, SCAN, DOWNLOAD} scan_state;    //different phases of scanning routine
 scan_state serverState = (scan_state) -1;  //type-cast muss                               //Global var for matching current scannin state from server
                                     // '-> mit unzulässigem state initialisiert zum Starten des Scan-Vorgangs durch Verbindung zum Webserver
+                                    //zusätzlichen State "CONNECTION=-1" hinzufügen
 
 /***************************************************************************************************************/
 /*                                                SETUP                                                        */
@@ -170,6 +175,7 @@ void setup() {                // evtl in Funktionen auslagern ? serial_init(), l
   server.on("/running", handle_RunningScan);   //showing Scan progress and generating button to copy MatLab-Code from next page
   server.on("/download", handle_DownloadData);  //displaying MatLab Code with measurements to "download" (copy-paste) - also: restart whole procedure
   server.onNotFound(handle_NotFound);           //ungültige URL liefert E404
+
   server.begin();
   Serial.println("HTTP server started");
 
@@ -192,16 +198,6 @@ void setup() {                // evtl in Funktionen auslagern ? serial_init(), l
 /***************************************************************************************************************/
 
 void loop() {
-  /*  while(1){
-    uint tmp_data = 0;
-    for(uint16_t measurement = 1; measurement <= 200; measurement++){             // calculate average out of xxx repititions
-      tmp_data += vl.readRange();                                
-      //xy->error = vl.readRangeStatus();
-    }    
-    tmp_data = tmp_data/200;
-    Serial.println(tmp_data);
-    }*/
-
 
   server.handleClient();                          //start specific http-requests --> startet bei /root 
 
@@ -209,7 +205,7 @@ void loop() {
     case ROOT_PREPARING: //--> hier nach Button click auf /(root)
       check_scan_error(&current_scan);
       scan_prepare(&current_scan);               // LCD: "Initialisieren: Bitte noch kein Gegenstand auf Platte stellen !"    && setzt serverState nach Abschluss auf READY
-      serverState = READY; //nah Abschluss der Calibration -> Zustand weiterschalten 
+      serverState = READY;                      //nach Abschluss der Calibration -> Zustand weiterschalten 
     break;
 
     case READY: 
@@ -244,27 +240,26 @@ void loop() {
 
 void scan_prepare(scan_handle* xy){           // drive motor in correct position and calibrate reference distance init variables/data 
   check_scan_error(xy);
-  //PLACEHOLDER
+  
   lcd.clear();
-  lcd.print("ph: scan_prepare");
+  lcd.print("Calibration..");
   delay(2500);
-  //PLACEHOLDER
-
+  
   // calibration (raw)
-  while(vl.readRange() >= 25){
-    step_motor(&threaded_rod_motor, DOWN, 100);
+  while(vl.readRange() >= (DISTANCE_SENSOR_PLATE)){
+    step_motor(&threaded_rod_motor, DOWN, 50);
   }
   delay(1000);
   uint16_t ref_distance = vl.readRange();
-  Serial.println(ref_distance);
+  //Serial.println(ref_distance);
 
   // calibration (fine)
-  while(vl.readRange() <= (ref_distance+5)){
+  while(vl.readRange() <= (ref_distance+5)){    // "+5" to balance out variance of sensor(1mm)
     step_motor(&threaded_rod_motor, UP, 1);
     delay(100);
   }
-  ref_distance = vl.readRange();
-  Serial.println(ref_distance);
+
+  //platte drehen lassen um ggfls über unplanare stellen zu fahren (machnmal wurde platte trotzdem mit gescanned)
 }
 
 
@@ -278,16 +273,18 @@ void scan_wait_for_start(scan_handle* xy){
   lcd.print("druecken.");
 
   //while( (!button_state()) || (!server_button_state()) ){ };      // wait until Button is pressed or Server sends Input (scanState == SCAN)
-  while( button_state() == 0 || serverState != SCAN){}; 
+  while( button_state() == 0 || serverState != SCAN){
+    server.handleClient(); //Abfragen des http-request (sobald button auf /ready gedrückt zu handle_runningScan -> stateScan = SCAN)
+  }
 
-   server.handleClient(); //Abfragen des http-request (sobald button auf /ready gedrückt zu handle_runningScan -> stateScan = SCAN)
+  serverState = SCAN;     //State anpassen nach Taster click
 
-    lcd.clear();
-    lcd.print("Scan starten");
-    delay(500);
-    for(uint8_t i=0; i<2; i++){
-    lcd.print(".");
-    delay(500);
+  lcd.clear();
+  lcd.print("Scan starten");
+  delay(500);
+  for(uint8_t i=0; i<2; i++){
+  lcd.print(".");
+  delay(500);
   }
 }
 
@@ -340,7 +337,7 @@ void handle_OnConnect() {
   //Hier Ausgabe an Bildschirm mit Startup und Initialisierung und Button für calibration start
 }
 
-void handle_Ready4Scan() { // /ready
+void handle_Ready4Scan() { // /ready -> while calibr
   Serial.println("Ready4scan");
   if (serverState == -1 || serverState == 3) {
     serverState = ROOT_PREPARING;           //starten des calibration zustands
@@ -414,14 +411,18 @@ String SendHTML(scan_state state){  //generiert Seite für entsprechenden handle
   } 
   else if (serverState == 2) { // using /RunningScan
     ptr +="<h2>Scan started!</h2>\n";
-    ptr +="<h3>Progress is shown on LCD-Display..</h3>\n";
+    ptr +="<h3>Scanning Progress: ";
+
+    ptr+= scan_progress_global; ptr +=  "%";
+
+    ptr += "</h3>\n";
 
     ptr +="<p>Generate scanned 3d_modell:</p><a class=\"button button-off\" href=\"/running\">WAIT for FINISH</a>\n"; 
   } 
   else {    // using /RunningScan
     ptr +="<h3>Scan finished..</h3>\n";
 
-    ptr +="<p>Generate scanned 3d_modell:</p><a class=\"button button-off\" href=\"/download\">DOWNLOAD</a>\n";  //zu /DownloadData
+    ptr +="<p>Generate scanned 3d_modell:</p><a class=\"button button-on\" href=\"/download\">DOWNLOAD</a>\n";  //zu /DownloadData
   }
 
   ptr +="</body>\n";
@@ -485,7 +486,7 @@ String SendHTML_Download (scan_state state, scan_handle* xy) {
       ptr +=",";
     }
     else{
-      ptr += xy->height[i];
+      ptr += xy->height[i]; 
       ptr +="]' * (1/10);</p>\n";             // divided by 10 due to information loss with integer processing
     }
   }
@@ -519,7 +520,7 @@ uint8_t server_button_state(void){            // asks server if button is klicke
 
 
 void measure_one_rotation(scan_handle* xy, uint8_t current_height){                                 // measures one rotation and puts measured data*10 (avoids information loose cause of integer calculation) in xy->alpha xy->radius & xy->height
-  for(uint16_t current_alpha = 0; current_alpha <3600; current_alpha += ANGLE_STEP_SIZE_MUL10)      // repeat untill 360 degree reached
+  for(uint16_t current_alpha = 0; current_alpha <3600; current_alpha += (ANGLE_STEP_SIZE_MUL10))      // repeat untill 360 degree reached
   {
     uint16_t tmp_data = 0;
     for(uint16_t measurement = 1; measurement <= MEASUREMENTS_PER_POINT; measurement++){             // calculate average out of xxx repititions
@@ -529,7 +530,7 @@ void measure_one_rotation(scan_handle* xy, uint8_t current_height){             
 
     uint index = xy->index;
     xy->alpha_mul_10[index] = current_alpha;
-    xy->radius_mul_10[index] = (REFERENCE_DISTANCE_MUL10 - ( (tmp_data*10)/MEASUREMENTS_PER_POINT) );           // "*10" due to information lost processing with integers ************************************************IMPORTANT: CHECK IF DISTANCE IS TO HIGH !!! IF YES -> WRITE "0"
+    xy->radius_mul_10[index] = ((REFERENCE_DISTANCE_MUL10) - ( (tmp_data*10)/(MEASUREMENTS_PER_POINT)) );           // "*10" due to information lost processing with integers ************************************************IMPORTANT: CHECK IF DISTANCE IS TO HIGH !!! IF YES -> WRITE "0"
     xy->height[index] = current_height;
     xy->index++;
     if(index > ((sizeof(xy->radius_mul_10))/sizeof(xy->radius_mul_10[0]))){    // check if size of array is big enough for data
@@ -537,18 +538,18 @@ void measure_one_rotation(scan_handle* xy, uint8_t current_height){             
     }
     
     step_motor(&disc_motor, CLOCKWISE, 1);
-    
+    delay(100);
   }
 }
 
 
-void step_motor(motor_handle* motor, uint8_t direction, uint8_t amount_of_steps){
+void step_motor(motor_handle* motor, uint8_t direction, uint16_t amount_of_steps){      //uint16 da Anzahl Schritte (50 pro 2mm) größer als 2^8
   digitalWrite(motor->dir_pin, direction);
-  for(int i=0; i<amount_of_steps; i++){
+  for(uint16_t i=0; i<amount_of_steps; i++){     //unint16_t um zu matchen mit amount_of_steps
     digitalWrite(motor->step_pin, HIGH);
-    delay(10);                                   // test different delays !
+    delay(motor->speed);                                   // test different delays !
     digitalWrite(motor->step_pin, LOW);
-    delay(10);                                   // test different delays !
+    delay(motor->speed);                                   // test different delays !
   }
 }
 
@@ -562,6 +563,9 @@ void display_scan_progress(uint8_t current_value, uint8_t max_value){   // shows
 
   uint8_t progress_percent = (current_value*100)/(max_value);           // calculates current progress in percentage
   uint8_t progress_scaled  = ((progress_percent*LCD_COLUMNS)/100);      // progress scaled to LCD screen
+
+  scan_progress_global = progress_percent;          //zwischenspeichern zur Ausgabe auf Server
+  server.handleClient();
 
   lcd.setCursor(progress_scaled,1); 
   uint8_t st1 = ((LCD_COLUMNS-1)/2);
