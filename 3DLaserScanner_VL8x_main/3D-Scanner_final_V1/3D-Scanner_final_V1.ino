@@ -210,11 +210,16 @@ void loop() {
 
     case READY: 
       //handle_Ready4Scan();
+      Serial.println("in READY");
       scan_wait_for_start(&current_scan);        // LCD: "Taste zum starten Drücken" && loop for button_state     && server_ready4Scan -> per taster oder ServerButton zu:
+      Serial.println("nach scan_wait_for..");
+      
     break;
 
     case SCAN:
+      Serial.println("in SCAN");
       scan_run(&current_scan);                   // LCD: "Scanning... (PROGRESS BAR ?)" && MOTOR1/2 Drehen + VL6180x messen und in data speichern      && server_runningScan -> sobald abgeschlossen per ServerButton zu:
+      Serial.println("zu Download");
       serverState = DOWNLOAD;
     break;
 
@@ -271,11 +276,14 @@ void scan_wait_for_start(scan_handle* xy){
   lcd.setCursor(0,1);
   lcd.print("druecken.");
 
-  //while( (!button_state()) || (!server_button_state()) ){ };      // wait until Button is pressed or Server sends Input (scanState == SCAN)
+  Serial.println("vor while");
+
   while( button_state() == 0 || serverState != SCAN){
     server.handleClient(); //Abfragen des http-request (sobald button auf /ready gedrückt zu handle_runningScan -> stateScan = SCAN)
+    Serial.println("in while");
   }
 
+  Serial.println("after while");
   serverState = SCAN;     //State anpassen nach Taster click
 
   lcd.clear();
@@ -291,12 +299,17 @@ void scan_wait_for_start(scan_handle* xy){
 
 void scan_run(scan_handle* xy){
   for(int current_height = 0; current_height < MAX_HEIGHT; current_height += HEIGHT_STEP_SIZE)
-  {           
+  {  
+    Serial.println("in scan run 1");     
     check_scan_error(xy);
+     Serial.println("in scan run 2");   
     display_scan_progress(current_height, MAX_HEIGHT);              // maybe smarter to input index and sizeof array as parameter -> better percentage resolution
+     Serial.println("in scan run 3");   
     measure_one_rotation(xy, current_height);
+     Serial.println("in scan run 4");   
     delay(10);
     static uint16_t steps = (MEASUREMENTS_PER_ROTATION*HEIGHT_STEP_SIZE)/THREADED_ROD_PITCH;
+     Serial.println("in scan run 5");   
     step_motor(&threaded_rod_motor, UP, steps);                     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
     delay(10);
   }                                                                 // or 8mm/200steps  => 2mm/50steps
@@ -519,14 +532,17 @@ uint8_t server_button_state(void){            // asks server if button is klicke
 
 
 void measure_one_rotation(scan_handle* xy, uint8_t current_height){                                 // measures one rotation and puts measured data*10 (avoids information loose cause of integer calculation) in xy->alpha xy->radius & xy->height
+  Serial.println("in measure_one_rot  1");  
   for(uint16_t current_alpha = 0; current_alpha <3600; current_alpha += (ANGLE_STEP_SIZE_MUL10))      // repeat untill 360 degree reached
   {
     uint16_t tmp_data = 0;
     for(uint16_t measurement = 1; measurement <= MEASUREMENTS_PER_POINT; measurement++){             // calculate average out of xxx repititions
+     Serial.println("in measure_one_rot  2"); 
       tmp_data += vl.readRange();                                
       //xy->error = vl.readRangeStatus();
     }       
 
+    Serial.println("in measure_one_rot  3"); 
     uint index = xy->index;
     xy->alpha_mul_10[index] = current_alpha;
     xy->radius_mul_10[index] = ((REFERENCE_DISTANCE_MUL10) - ( (tmp_data*10)/(MEASUREMENTS_PER_POINT)) );           // "*10" due to information lost processing with integers ************************************************IMPORTANT: CHECK IF DISTANCE IS TO HIGH !!! IF YES -> WRITE "0"
@@ -536,6 +552,7 @@ void measure_one_rotation(scan_handle* xy, uint8_t current_height){             
       xy->error = ARRAY_OVERFLOW_ERROR;
     }
     
+    Serial.println("in measure_one_rot  3"); 
     step_motor(&disc_motor, CLOCKWISE, 1);
     delay(100);
   }
@@ -559,13 +576,13 @@ void display_scan_progress(uint8_t current_value, uint8_t max_value){   // shows
     lcd.clear();
     lcd.print("Scanfortschritt:");
   }
-
+  Serial.println("in display_scan_prog  1");   
   uint8_t progress_percent = (current_value*100)/(max_value);           // calculates current progress in percentage
   uint8_t progress_scaled  = ((progress_percent*LCD_COLUMNS)/100);      // progress scaled to LCD screen
-
+  Serial.println("in display_scan_prog  1");  
   scan_progress_global = progress_percent;          //zwischenspeichern zur Ausgabe auf Server
-  server.handleClient();
-
+  //server.handleClient();
+  Serial.println("in display_scan_prog  1");  
   lcd.setCursor(progress_scaled,1); 
   uint8_t st1 = ((LCD_COLUMNS-1)/2);
   uint8_t st2 = ((LCD_COLUMNS-1)/2)+2;
@@ -576,6 +593,7 @@ void display_scan_progress(uint8_t current_value, uint8_t max_value){   // shows
   lcd.setCursor(((LCD_COLUMNS-1)/2),1);                       // show percentage in the middle of the row
   lcd.print(progress_percent);
   lcd.print("%");
+  Serial.println("in display_scan_prog  1");  
 }
 
 
