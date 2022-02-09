@@ -209,7 +209,7 @@ void loop() {
     break;
 
     case READY: 
-      handle_Ready4Scan();
+      //handle_Ready4Scan();
       scan_wait_for_start(&current_scan);        // LCD: "Taste zum starten Drücken" && loop for button_state     && server_ready4Scan -> per taster oder ServerButton zu:
     break;
 
@@ -261,7 +261,6 @@ void scan_prepare(scan_handle* xy){           // drive motor in correct position
 
   //platte drehen lassen um ggfls über unplanare stellen zu fahren (machnmal wurde platte trotzdem mit gescanned)
 }
-
 
 
 void scan_wait_for_start(scan_handle* xy){
@@ -350,7 +349,7 @@ void handle_Ready4Scan() { // /ready -> while calibr
 
 void handle_RunningScan() { // /running
   Serial.println("runningScan");
-  if (serverState == READY) {
+  if (serverState != SCAN) {
     serverState = SCAN;
     server.send(200, "text/html", SendHTML(serverState));
   } else {
@@ -397,7 +396,7 @@ String SendHTML(scan_state state){  //generiert Seite für entsprechenden handle
    ptr +="<p>Start Instrument Boot Up</p><a class=\"button button-on\" href=\"/ready\">START</a>\n"; 
   } 
 
-  if (serverState == ROOT_PREPARE) {   // using /Ready4Scan
+  if (serverState == ROOT_PREPARING) {   // using /Ready4Scan
     ptr +="<h2>Please wait before installing object!</h2>\n";
     ptr +="<h3>Calibration is running..</h3>\n";
 
