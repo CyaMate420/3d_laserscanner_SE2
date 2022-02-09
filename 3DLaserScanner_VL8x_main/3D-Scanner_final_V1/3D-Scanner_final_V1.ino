@@ -127,7 +127,7 @@ LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);                // not sure if in setu
 Adafruit_VL6180X vl = Adafruit_VL6180X();
 
 typedef enum scanState_from_server {ROOT_PREPARING, READY, SCAN, DOWNLOAD} scan_state;    //different phases of scanning routine
-scan_state serverState = (Scan_state) -1;  //type-cast muss                               //Global var for matching current scannin state from server
+scan_state serverState = (scan_state) -1;  //type-cast muss                               //Global var for matching current scannin state from server
                                     // '-> mit unzulässigem state initialisiert zum Starten des Scan-Vorgangs durch Verbindung zum Webserver
 
 /***************************************************************************************************************/
@@ -164,7 +164,7 @@ void setup() {                // evtl in Funktionen auslagern ? serial_init(), l
   WiFi.softAPConfig(local_ip, gateway, subnet);
   delay(100);
 
-  //**********Server_handles aufrufen-> into: ON_2_handles()
+  //**********Server_handles aufrufen-> into: ON_2_handles()?
   server.on("/", handle_OnConnect);           //Landing-Page und INfos über Preparing zustand
   server.on("/ready", handle_Ready4Scan);     //after finishing Scanner preparing-> start scan here with serverButton (Start Scan) click oder hardwareButton
   server.on("/running", handle_RunningScan);   //showing Scan progress and generating button to copy MatLab-Code from next page
@@ -178,6 +178,11 @@ void setup() {                // evtl in Funktionen auslagern ? serial_init(), l
   if (! vl.begin()) {
     current_scan.error = NO_SENSOR_FOUND;               // error code for not founding sensor
   }
+
+  lcd.clear();
+  lcd.print("Please Log into Webserver..");
+  delay(2000);
+
 }
 
 
@@ -197,14 +202,14 @@ void loop() {
     Serial.println(tmp_data);
     }*/
 
-  server.handleClient();                          //start specific http-requests        
-  //startet bei /root 
 
-  switch (scanState) {
+  server.handleClient();                          //start specific http-requests --> startet bei /root 
 
-    case ROOT_PREPARING: //nach Button click bei /root
+  switch (serverState) {
+    case ROOT_PREPARING: //--> hier nach Button click auf /(root)
       check_scan_error(&current_scan);
-      scan_prepare(&current_scan);               // LCD: "Initialisieren: Bitte noch kein Gegenstand auf Platte stellen !"    && setzt scanState nach Abschluss auf READY
+      scan_prepare(&current_scan);               // LCD: "Initialisieren: Bitte noch kein Gegenstand auf Platte stellen !"    && setzt serverState nach Abschluss auf READY
+      serverState = READY; //nah Abschluss der Calibration -> Zustand weiterschalten 
     break;
 
     case READY: 
@@ -214,15 +219,16 @@ void loop() {
 
     case SCAN:
       scan_run(&current_scan);                   // LCD: "Scanning... (PROGRESS BAR ?)" && MOTOR1/2 Drehen + VL6180x messen und in data speichern      && server_runningScan -> sobald abgeschlossen per ServerButton zu:
+      serverState = DOWNLOAD;
     break;
 
     case DOWNLOAD:
       scan_finish(&current_scan);                // LCD: "Scan beendet. Übertrage Daten..."  -> scan_transmit ?      && server_download ->per button zu on connect zum neustarten
     break;
 
-    default:  //Webserver nicht erfolgreich oder noch nicht aufgerufen
+    default:  //Webserver nicht aufgerufen oder noch kein Start der Calibration
       lcd.clear();
-      cd.print("Connect to Server");
+      lcd.print("Waiting for Server input..");
       Serial.println("default CASE");
       delay(2500);
     break;
@@ -243,6 +249,7 @@ void scan_prepare(scan_handle* xy){           // drive motor in correct position
   lcd.print("ph: scan_prepare");
   delay(2500);
   //PLACEHOLDER
+
   // calibration (raw)
   while(vl.readRange() >= 25){
     step_motor(&threaded_rod_motor, DOWN, 100);
@@ -258,8 +265,6 @@ void scan_prepare(scan_handle* xy){           // drive motor in correct position
   }
   ref_distance = vl.readRange();
   Serial.println(ref_distance);
-
-  scanState = READY;
 }
 
 
@@ -272,13 +277,15 @@ void scan_wait_for_start(scan_handle* xy){
   lcd.setCursor(0,1);
   lcd.print("druecken.");
 
-  //while( (!button_state()) || (!server_button_state()) ){ };      // wait until Button is pressed or Server sends Input
+  //while( (!button_state()) || (!server_button_state()) ){ };      // wait until Button is pressed or Server sends Input (scanState == SCAN)
   while( button_state() == 0 || serverState != SCAN){}; 
 
-  lcd.clear();
-  lcd.print("Scan starten");
-  delay(500);
-  for(uint8_t i=0; i<2; i++){
+   server.handleClient(); //Abfragen des http-request (sobald button auf /ready gedrückt zu handle_runningScan -> stateScan = SCAN)
+
+    lcd.clear();
+    lcd.print("Scan starten");
+    delay(500);
+    for(uint8_t i=0; i<2; i++){
     lcd.print(".");
     delay(500);
   }
@@ -333,38 +340,39 @@ void handle_OnConnect() {
   //Hier Ausgabe an Bildschirm mit Startup und Initialisierung und Button für calibration start
 }
 
-void handle_Ready4Scan() {
+void handle_Ready4Scan() { // /ready
   Serial.println("Ready4scan");
-  if (serverState = = -1); {
-    serverState = ROOT_PREPARING;
+  if (serverState == -1 || serverState == 3) {
+    serverState = ROOT_PREPARING;           //starten des calibration zustands
   server.send(200, "text/html", SendHTML(serverState));
-  }
+  } else {
   Serial.println("READY ZUSTAND");
   server.send(200, "text/html", SendHTML(serverState));
+  }
 }
 
-void handle_RunningScan() {
-  Serial.println("running scan");
-  scanState = SCAN;
-  server.send(200, "text/html", SendHTML(serverState));
-  //SCAN_prog from number of stepps
+void handle_RunningScan() { // /running
+  Serial.println("runningScan");
+  if (serverState == 1) {
+    serverState = SCAN;
+    server.send(200, "text/html", SendHTML(serverState));
+  } else {
+    Serial.println("refresh oder zu download");
+    server.send(200, "text/html", SendHTML(serverState));
+  }
 }
 
-void handle_DownloadData() {
+void handle_DownloadData() { // /download
   Serial.println("download data");
-  //var SCAN_data init & nutzung usw... mit abfrage Messdaten und Ausgabe
-  SCAN_data = 1; //zum Test -> entspricht Scan ist fertig
-  server.send(200, "text/html", SendHTML_Download(SCAN_data)); //--> Neue SendHTML_download nötig 
-
+  server.send(200, "text/html", SendHTML_Download(serverState, &current_scan)); //übertragen der Daten auf Website 
 } 
 
 void handle_NotFound(){
   server.send(404, "text/plain", "Not found");
 }
 
-String SendHTML(Scan_state state){ //generiert Seite für entsprechenden handle-> für verschiedene Zwecke neuen SEndHTML, download data and progress displaying
+String SendHTML(scan_state state){  //generiert Seite für entsprechenden handle-> if-Abfragen für verschiedene Zustände
   
-
   String ptr = "<!DOCTYPE html> <html>\n";  //indicates that  HTML-Code will be sent in the follwing  
   ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
   ptr +="<title>3D-LaserScanner by mst2.se2</title>\n";  //title page w/ <title>-tag
@@ -382,35 +390,118 @@ String SendHTML(Scan_state state){ //generiert Seite für entsprechenden handle-
   ptr +="</head>\n";
   ptr +="</body>\n";
 
-  ptr +="<h1>3D-LaserScanner by mst2.se2 students</h1>\n";  //Webpage headings..
+  ptr +="<h1>3D-LaserScanner routine</h1>\n";  //Webpage headings..
    
   
-  if(scanState == -1) {   // using /root
+  if(serverState == -1) {   // using /root
   ptr +="<h2>Web Application Using Access Point(AP) Mode From ESP32 WROOM connected to 3D-LaserScanner</h2>\n";
-    ptr +="<h3>Scanner needs to calibrate and prepare scanninc instrument..</h3>\n";
+  ptr +="<h3>Scanner needs to calibrate and prepare scanning instruments..</h3>\n";
 
-   ptr +="<p>Start Instrument Boot Up</p><a class=\"button button-on\" href=\"/Ready4Scan\">START</a>\n"; 
+   ptr +="<p>Start Instrument Boot Up</p><a class=\"button button-on\" href=\"/ready\">START</a>\n"; 
   } 
 
-  if (scanState == 0) {   // using /Ready4Scan
+  if (serverState == 0) {   // using /Ready4Scan
     ptr +="<h2>Please wait before installing object!</h2>\n";
     ptr +="<h3>Calibration is running..</h3>\n";
 
-   ptr +="<p>LOADING..</p><a class=\"button button-off\" href=\"/Ready4Scan\">Update</a>\n";
+   ptr +="<p>LOADING..</p><a class=\"button button-off\" href=\"/ready\">Refresh</a>\n";
   }
-  else {    
-    ptr +="<p>RADY</p><a class=\"button button-on\" href=\"/SCAN\">Start Scan</a>\n"; //->ANPASSEN
-  }
+  else if (serverState == 1) {    // /using /Ready4Scan
+    ptr +="<h2>Calibration finished!</h2>\n";
+    ptr +="<h3>Place object and start scan on Button below or on Scanner itself.</h3>\n";
 
-  //if(scanProg)
-  //{//ptr +="<p>LED2 Status: ON</p><a class=\"button button-off\" href=\"/led2off\">OFF</a>\n";} -> ANPASSEN
-  //else
-  //{//ptr +="<p>LED2 Status: OFF</p><a class=\"button button-on\" href=\"/led2on\">ON</a>\n";} -> ANPASSEN
+    ptr +="<p>After placing object:Y</p><a class=\"button button-on\" href=\"/running\">Start Scan</a>\n"; 
+  } 
+  else if (serverState == 2) { // using /RunningScan
+    ptr +="<h2>Scan started!</h2>\n";
+    ptr +="<h3>Progress is shown on LCD-Display..</h3>\n";
+
+    ptr +="<p>Generate scanned 3d_modell:</p><a class=\"button button-off\" href=\"/running\">WAIT for FINISH</a>\n"; 
+  } 
+  else {    // using /RunningScan
+    ptr +="<h3>Scan finished..</h3>\n";
+
+    ptr +="<p>Generate scanned 3d_modell:</p><a class=\"button button-off\" href=\"/download\">DOWNLOAD</a>\n";  //zu /DownloadData
+  }
 
   ptr +="</body>\n";
   ptr +="</html>\n";
   return ptr;
 }
+
+String SendHTML_Download (scan_state state, scan_handle* xy) {
+  String ptr = "<!DOCTYPE html> <html>\n";
+  ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
+  ptr +="<title>Download Measurement Data</title>\n";  //title page w/ <title>-tag
+
+  ptr +="<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n"; //Desgin & Layout
+  ptr +="body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h2 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";  //Layout
+
+  ptr +=".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n"; //Button design allgemein
+  ptr +=".button-on {background-color: #3498db;}\n"; //button aussehen
+  ptr +=".button-on:active {background-color: #2980b9;}\n"; //button wenn geklickt
+
+  ptr +="p {font-size: 14px;color: #888;margin-bottom: 10px;}\n"; //Layout
+  ptr +="</style>\n";
+  ptr +="</head>\n";
+  ptr +="</body>\n";
+
+  ptr +="<h1>3D-LaserScanner by mst2.se2 students</h1>\n";  //Webpage headings..
+
+  ptr +="<h2>MatLab-Code generiert</h2>\n";                   //AUSGABE MATLAB-CODE
+  ptr +="<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
+
+  //Ausgabe MatLab-Code
+  uint16_t amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
+
+  ptr +="<p>alpha=[";
+  for(int i=0; i<amount_array_elements; i++){
+    if(i != (amount_array_elements-1)){
+      ptr += xy->alpha_mul_10[i];
+      ptr +=",";
+    }
+    else{
+      ptr += xy->alpha_mul_10[i];
+      ptr +="]' * (pi/1800); </p>\n";             // divided by 10 due to information loss with integer processing
+    }
+  }
+
+  ptr +="<p>radius=[";
+  for(int i=0; i<amount_array_elements; i++){
+    if(i != (amount_array_elements-1)){
+      ptr += xy->radius_mul_10[i];
+      ptr +=",";
+    }
+    else{
+      ptr += xy->radius_mul_10[i];
+      ptr +="]' * (1/10);</p>\n";              // divided by 10 due to information loss with integer processing
+    }
+  }
+  
+  ptr +="<p>height=[";
+  for(int i=0; i<amount_array_elements; i++){
+    if(i != (amount_array_elements-1)){
+      ptr += xy->height[i];
+      ptr +=",";
+    }
+    else{
+      ptr += xy->height[i];
+      ptr +="]' * (1/10);</p>\n";             // divided by 10 due to information loss with integer processing
+    }
+  }
+
+  ptr +="<p>[x y z] = pol2cart(alpha,radius,height);</p>\n";
+  ptr +="<p>plot3(x,y,z);</p>\n";
+  
+
+  if(serverState == 3) //Option für neuen Scan 
+  {ptr +="<p>Generated</p><a class=\"button button-on\" href=\"/ready\">Start New Scan?</a>\n";}   //bei neuem scan-> neue calibration 
+
+  ptr +="</body>\n";
+  ptr +="</html>\n";
+  return ptr;
+}
+
 
 /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
 /*vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv private functions vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv*/
