@@ -339,7 +339,7 @@ void handle_OnConnect() {
 
 void handle_Ready4Scan() { // /ready -> while calibr
   Serial.println("Ready4scan");
-  if (serverState == -1 || serverState == 3) {
+  if (serverState == -1 || serverState == DOWNLOAD) {
     serverState = ROOT_PREPARING;           //starten des calibration zustands
   server.send(200, "text/html", SendHTML(serverState));
   } else {
@@ -350,7 +350,7 @@ void handle_Ready4Scan() { // /ready -> while calibr
 
 void handle_RunningScan() { // /running
   Serial.println("runningScan");
-  if (serverState == 1) {
+  if (serverState == READY) {
     serverState = SCAN;
     server.send(200, "text/html", SendHTML(serverState));
   } else {
@@ -397,19 +397,19 @@ String SendHTML(scan_state state){  //generiert Seite für entsprechenden handle
    ptr +="<p>Start Instrument Boot Up</p><a class=\"button button-on\" href=\"/ready\">START</a>\n"; 
   } 
 
-  if (serverState == 0) {   // using /Ready4Scan
+  if (serverState == ROOT_PREPARE) {   // using /Ready4Scan
     ptr +="<h2>Please wait before installing object!</h2>\n";
     ptr +="<h3>Calibration is running..</h3>\n";
 
    ptr +="<p>LOADING..</p><a class=\"button button-off\" href=\"/ready\">Refresh</a>\n";
   }
-  else if (serverState == 1) {    // /using /Ready4Scan
+  else if (serverState == READY) {    // /using /Ready4Scan
     ptr +="<h2>Calibration finished!</h2>\n";
     ptr +="<h3>Place object and start scan on Button below or on Scanner itself.</h3>\n";
 
     ptr +="<p>After placing object:Y</p><a class=\"button button-on\" href=\"/running\">Start Scan</a>\n"; 
   } 
-  else if (serverState == 2) { // using /RunningScan
+  else if (serverState == SCAN) { // using /RunningScan
     ptr +="<h2>Scan started!</h2>\n";
     ptr +="<h3>Scanning Progress: ";
 
