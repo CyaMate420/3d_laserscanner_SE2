@@ -48,7 +48,7 @@
 
 // customazable defines
 #define HEIGHT_STEP_SIZE            10          // 2mm height difference between two measured levels
-#define MAX_HEIGHT                  30          // 50mm difference between plate and top measure level
+#define MAX_HEIGHT                  10          // 50mm difference between plate and top measure level
 #define MEASUREMENTS_PER_POINT      10          // amount of measurement repititions per point
 
 // fixed defines
@@ -164,7 +164,6 @@ void setup() {
   server.on("/waiting",           server_waiting);        // showing Scan progress and generating button to copy MatLab-Code from next page
   server.on("/running",           server_running);        // displaying MatLab Code with measurements to "download" (copy-paste) - also: restart whole procedure
   server.on("/finished",          server_finished);
-  server.on("/button_pressed",    server_button_pressed);
   server.onNotFound(server_NotFound);                     // ungültige URL liefert E404
   server.begin();
   delay(100);
@@ -236,20 +235,15 @@ void scan_calibrate(scan_handle* xy){           // drive motor in correct positi
   Serial.println(ref_distance);
 
   // calibration (fine)
-  while((tmp=vl.readRange()) <= (ref_distance+10)){    // "+5" to balance out variance of sensor(1mm)
+  while((tmp=vl.readRange()) <= (ref_distance+10)){    // "+10" to balance out variance of sensor(1mm)
     step_motor(&threaded_rod_motor, UP, 1);
     Serial.print("Aktuell gemessener Wert in calibration rad: ");
     Serial.println(tmp);
+    server.handleClient();
     delay(100);
   }
 
-  Serial.print("Aktuell gemessener Wert in calibration rad: ");
-  Serial.println(tmp);
-  step_motor(&threaded_rod_motor, UP, OFFSET_LOWEST_LEVEL);      // 3mm up to be sure, that not the edge of the plate is detected !
-  //platte drehen lassen um ggfls über unplanare stellen zu fahren (machnmal wurde platte trotzdem mit gescanned)
-  tmp=vl.readRange();
-  Serial.print("Aktuell gemessener Wert in calibration rad: ");
-  Serial.println(tmp);
+  step_motor(&threaded_rod_motor, UP, OFFSET_LOWEST_LEVEL);      // Offset ->  to be sure, that not the edge of the plate is detected !
 }
 
 
@@ -265,7 +259,6 @@ void scan_wait_for_start(scan_handle* xy){
 
   button_state tmp = NOT_PRESSED;
   while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
-  //while( get_button_state() == NOT_PRESSED){
     server.handleClient();
     tmp = server_button_state;
   };
@@ -317,8 +310,12 @@ void scan_finish(scan_handle* xy){                // reset xy->error, data, inde
   transmit_matlab_code(xy);
   reset_scan_handle(xy);                          // data->{0}, index=0, error=0 ... 
   
-  while(1){server.handleClient();
-  }
+  button_state tmp = NOT_PRESSED;
+  while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
+    server.handleClient();
+    tmp = server_button_state;
+  };
+  server_button_state = NOT_PRESSED;
 }
 
 
@@ -349,6 +346,8 @@ void server_initialising(void) {
 
 
 void server_calibrating(void) {
+  server_button_state = PRESSED;
+  current_scan.state = CALIBRATING;
   server.send(200, "text/html", SendHTML(&current_scan)); 
 }
 
@@ -361,7 +360,9 @@ void server_waiting(void) {
 
 
 void server_running(void) {
-  server.send(200, "text/html", SendHTML(&current_scan)); 
+  server_button_state = PRESSED;
+  current_scan.state = RUNNING;
+  server.send(200, "text/html", SendHTML(&current_scan));
 }
 
 
@@ -370,11 +371,6 @@ void server_finished(void) {
   server.send(200, "text/html", SendHTML(&current_scan)); 
 }
 
-void server_button_pressed(void) { 
-  server_button_state = PRESSED;
-  current_scan.state = RUNNING;
-  server.send(200, "text/html", SendHTML(&current_scan));
-}
 
 void server_NotFound(void){
   server.send(404, "text/plain", "Not found");
@@ -405,32 +401,39 @@ String SendHTML(scan_handle* xy){
    
   
   if(xy->state == INITIALISING) { 
-  ptr +="<h2>Please wait</h2>\n";
-  ptr +="<h3>Initialising...</h3>\n";
+    ptr +="<h2>Please wait</h2>\n";
+    ptr +="<h3>Initialising...</h3>\n";
+    ptr +="<a class=\"button button-on\" href=\"/\">Refresh</a>\n"; 
   } 
 
   else if (xy->state == CALIBRATING) {
     ptr +="<h2>Please wait</h2>\n";
     ptr +="<h3>Calibrating...</h3>\n";
+    ptr +="<a class=\"button button-on\" href=\"/\">Refresh</a>\n"; 
   }
 
   else if (xy->state == WAITING) {
     ptr +="<h2>Calibration successfull!</h2>\n";
     ptr +="<h3>Start scan by pushing button</h3>\n";
 
-    ptr +="<a class=\"button button-on\" href=\"/button_pressed\">Start Scan</a>\n"; 
+    ptr +="<a class=\"button button-on\" href=\"/running\">Start Scan</a>\n"; 
   } 
 
   else if (xy->state == RUNNING){ 
     ptr +="<h2>Scan running!</h2>\n";
     ptr +="<h3>Current Progress: ";
-    ptr+= xy->progress;
+    ptr += xy->progress;
     ptr += "%</h3>\n";
-    ptr +="<a class=\"button button-on\" href=\"/\">Update</a>\n"; 
+    ptr +="<a class=\"button button-on\" href=\"/\">Refresh</a>\n"; 
   } 
 
   else if (xy->state == FINISHED){    // using /RunningScan
-    ptr += SendHTML_Download(xy);
+    String tmp = SendHTML_Download(xy);
+    ptr += tmp;
+    Serial.println(xy->alpha_mul_10[0]);
+    Serial.println(xy->alpha_mul_10[1]);
+    Serial.println(xy->alpha_mul_10[2]);
+    ptr +="<a class=\"button button-on\" href=\"/calibration\">Reset Scan</a>\n"; 
   }
 
   ptr +="</body>\n";
@@ -441,52 +444,62 @@ String SendHTML(scan_handle* xy){
 
 
 String SendHTML_Download (scan_handle* xy){
-  String tmp ="<h2>Scan finished</h2>\n";                   //AUSGABE MATLAB-CODE
-  tmp +="<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
+  String rtn ="<h2>Scan finished</h2>\n";                   //AUSGABE MATLAB-CODE
+  rtn +="<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
 
   //Ausgabe MatLab-Code
   uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
+  Serial.println("anzahl array elemente:");
+  Serial.println(amount_array_elements);
 
-  tmp +="<p>alpha=[";
+  rtn +="<p>alpha=[";
+  Serial.println("alpha=[");
   for(uint i=0; i<amount_array_elements; i++){
+    String tmp = String(xy->alpha_mul_10[i]);
+    
     if(i != (amount_array_elements-1)){
-      tmp += xy->alpha_mul_10[i];
-      tmp +=",";
+      rtn += tmp;
+      Serial.println(xy->alpha_mul_10[i]);
+      rtn +=",";
     }
     else{
-      tmp += xy->alpha_mul_10[i];
-      tmp +="]' * (pi/1800); </p>\n";             // divided by 10 due to information loss with integer processing
+      rtn += tmp;
+      Serial.println(xy->alpha_mul_10[i]);
+      Serial.println("]' * (pi/1800);");
+      rtn +="]' * (pi/1800); </p>\n";             // divided by 10 due to information loss with integer processing
     }
   }
 
-  tmp +="<p>radius=[";
+  rtn +="<p>radius=[";
   for(uint i=0; i<amount_array_elements; i++){
+    String tmp = String(xy->radius_mul_10[i]);;
     if(i != (amount_array_elements-1)){
-      tmp += xy->radius_mul_10[i];
-      tmp +=",";
+      rtn += tmp;
+      rtn +=",";
     }
     else{
-      tmp += xy->radius_mul_10[i];
-      tmp +="]' * (1/10);</p>\n";              // divided by 10 due to information loss with integer processing
+      rtn += tmp;
+      rtn +="]' * (1/10);</p>\n";              // divided by 10 due to information loss with integer processing
     }
   }
   
-  tmp +="<p>height=[";
+  rtn +="<p>height=[";
   for(int i=0; i<amount_array_elements; i++){
+    String tmp = String(xy->height[i]);
     if(i != (amount_array_elements-1)){
-      tmp += xy->height[i];
-      tmp +=",";
+      rtn += tmp;
+      rtn +=",";
     }
     else{
-      tmp += xy->height[i]; 
-      tmp +="]' * (1/10);</p>\n";             // divided by 10 due to information loss with integer processing
+      rtn += tmp; 
+      rtn +="]' * (1/10);</p>\n";             // divided by 10 due to information loss with integer processing
     }
   }
 
-  tmp +="<p>[x y z] = pol2cart(alpha,radius,height);</p>\n";
-  tmp +="<p>plot3(x,y,z);</p>\n";
+  rtn +="<p>[x y z] = pol2cart(alpha,radius,height);</p>\n";
+  rtn +="<p>plot3(x,y,z);</p>\n";
 
-  return tmp;
+  return rtn;
 }
 
 
