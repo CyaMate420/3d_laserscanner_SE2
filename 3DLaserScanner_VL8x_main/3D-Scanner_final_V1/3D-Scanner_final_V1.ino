@@ -215,7 +215,6 @@ void loop() {
 void scan_calibrate(scan_handle* xy){           // drive motor in correct position and calibrate reference distance init variables/data 
   xy->state = CALIBRATING;
   server.handleClient();
-  delay(100);
 
   lcd.clear();
   lcd.print("Kalibrieren...");
@@ -225,7 +224,7 @@ void scan_calibrate(scan_handle* xy){           // drive motor in correct positi
   int tmp = 0;
   while((tmp = vl.readRange()) >= (DISTANCE_SENSOR_PLATE)){
     step_motor(&threaded_rod_motor, DOWN, 50);
-    Serial.print("Aktuell gemessener Wert in calibration rad: ");
+    Serial.print("Aktuell gemessener Wert in calibration raw: ");
     Serial.println(tmp);
     server.handleClient();
   }
@@ -237,7 +236,7 @@ void scan_calibrate(scan_handle* xy){           // drive motor in correct positi
   // calibration (fine)
   while((tmp=vl.readRange()) <= (ref_distance+10)){    // "+10" to balance out variance of sensor(1mm)
     step_motor(&threaded_rod_motor, UP, 1);
-    Serial.print("Aktuell gemessener Wert in calibration rad: ");
+    Serial.print("Aktuell gemessener Wert in calibration fine: ");
     Serial.println(tmp);
     server.handleClient();
     delay(100);
@@ -250,7 +249,6 @@ void scan_calibrate(scan_handle* xy){           // drive motor in correct positi
 void scan_wait_for_start(scan_handle* xy){
   xy->state = WAITING;
   server.handleClient();
-  delay(100);
 
   lcd.clear();
   lcd.print("Zum Starten");
@@ -278,7 +276,6 @@ void scan_wait_for_start(scan_handle* xy){
 void scan_run(scan_handle* xy){
   xy->state = RUNNING;
   server.handleClient();
-  delay(100);
   display_scan_progress(0, MAX_HEIGHT);
 
   for(uint16_t current_height = 0; current_height < MAX_HEIGHT; current_height += HEIGHT_STEP_SIZE)
@@ -286,7 +283,6 @@ void scan_run(scan_handle* xy){
     static const uint16_t steps = (MEASUREMENTS_PER_ROTATION*HEIGHT_STEP_SIZE)/(THREADED_ROD_PITCH);
     xy->progress = display_scan_progress(current_height, MAX_HEIGHT);
     server.handleClient();
-    delay(100);
 
     if(current_height != 0){
       step_motor(&threaded_rod_motor, UP, steps);                     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
@@ -305,10 +301,8 @@ void scan_run(scan_handle* xy){
 void scan_finish(scan_handle* xy){                // reset xy->error, data, index and transmit data
   xy->state = FINISHED;
   server.handleClient();
-  delay(100);
 
   transmit_matlab_code(xy);
-  reset_scan_handle(xy);                          // data->{0}, index=0, error=0 ... 
   
   button_state tmp = NOT_PRESSED;
   while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
@@ -316,6 +310,8 @@ void scan_finish(scan_handle* xy){                // reset xy->error, data, inde
     tmp = server_button_state;
   };
   server_button_state = NOT_PRESSED;
+
+  reset_scan_handle(xy);
 }
 
 
@@ -430,10 +426,8 @@ String SendHTML(scan_handle* xy){
   else if (xy->state == FINISHED){    // using /RunningScan
     String tmp = SendHTML_Download(xy);
     ptr += tmp;
-    Serial.println(xy->alpha_mul_10[0]);
-    Serial.println(xy->alpha_mul_10[1]);
-    Serial.println(xy->alpha_mul_10[2]);
     ptr +="<a class=\"button button-on\" href=\"/calibration\">Reset Scan</a>\n"; 
+    xy->progress = 0;
   }
 
   ptr +="</body>\n";
@@ -449,23 +443,17 @@ String SendHTML_Download (scan_handle* xy){
 
   //Ausgabe MatLab-Code
   uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
-  Serial.println("anzahl array elemente:");
-  Serial.println(amount_array_elements);
 
   rtn +="<p>alpha=[";
-  Serial.println("alpha=[");
   for(uint i=0; i<amount_array_elements; i++){
     String tmp = String(xy->alpha_mul_10[i]);
     
     if(i != (amount_array_elements-1)){
       rtn += tmp;
-      Serial.println(xy->alpha_mul_10[i]);
       rtn +=",";
     }
     else{
       rtn += tmp;
-      Serial.println(xy->alpha_mul_10[i]);
-      Serial.println("]' * (pi/1800);");
       rtn +="]' * (pi/1800); </p>\n";             // divided by 10 due to information loss with integer processing
     }
   }
@@ -572,12 +560,6 @@ uint16_t display_scan_progress(uint16_t current_value, uint16_t max_value){   //
       lcd.print(".");
     }
   }
-
-  Serial.print("Fortschritt in %: ");
-  Serial.println(progress_percent);  
-  Serial.print("Fortschritt skaliert zwischen 0-15: ");
-  Serial.println(progress_scaled);
-
   return progress_percent;
 }
 
@@ -660,5 +642,8 @@ void reset_scan_handle(scan_handle* xy){
   }
   xy->error = NONE;
   xy->index = 0;
+  xy->state = CALIBRATING;
+  xy->progress = 0;
+  xy->server_button_state = NOT_PRESSED;
 }
 /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
