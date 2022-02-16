@@ -9,8 +9,6 @@
 #include <Stepper.h>
 #include <WiFi.h>
 #include <WebServer.h>
-//#include <AccelStepper.h>               // no need for it due to just toggle GPIO pins ? 
-
 
 
 /***************************************************************************************************************/
@@ -22,10 +20,10 @@
 #define BUTTON  5         // Button pin
 
 //Stepper motor 
-#define STEP_PIN_1 32      // Motor1 step pin  (disc)
-#define DIR_PIN_1  33      // Motor1 direction pin (disc)
-#define STEP_PIN_2 26      // Motor2 step pin  (threaded rod)
-#define DIR_PIN_2  27      // Motor2 direction pin (threaded rod)
+#define STEP_PIN_1 32     // Motor1 step pin  (disc)
+#define DIR_PIN_1  33     // Motor1 direction pin (disc)
+#define STEP_PIN_2 26     // Motor2 step pin  (threaded rod)
+#define DIR_PIN_2  27     // Motor2 direction pin (threaded rod)
 
 //LCD 
 #define RS  19            // LCD RS pin 
@@ -35,13 +33,6 @@
 #define D6  16            // LCD D6 pin
 #define D7  15            // LCD D7 pin
 
-//WebServer defines
-const char* ssid = "LaserScanner";    //Server name/SSID
-const char* password = "3desp32";     //Server password
-IPAddress local_ip(192,168,1,1);      //Sever default ip and stuff
-IPAddress gateway(192,168,1,1); 
-IPAddress subnet(255,255,255,0); 
-WebServer server(80);                 //default HTTP-Port
 
 /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
 
@@ -52,12 +43,12 @@ WebServer server(80);                 //default HTTP-Port
 //motor defines 
 #define CLOCKWISE           1
 #define COUNTERCLOCKWISE    0
-#define UP                  1           // ausprobieren 
-#define DOWN                0           // ausprobieren 
+#define UP                  1           
+#define DOWN                0            
 
 // customazable defines
-#define HEIGHT_STEP_SIZE            4           // 2mm height difference between two measured levels
-#define MAX_HEIGHT                  40          // 50mm difference between plate and top measure level
+#define HEIGHT_STEP_SIZE            10          // 2mm height difference between two measured levels
+#define MAX_HEIGHT                  10          // 50mm difference between plate and top measure level
 #define MEASUREMENTS_PER_POINT      10          // amount of measurement repititions per point
 
 // fixed defines
@@ -68,11 +59,10 @@ WebServer server(80);                 //default HTTP-Port
 #define MEASUREMENTS_PER_ROTATION   (3600/ANGLE_STEP_SIZE_MUL10)         
 #define MEASURED_LEVELS             (MAX_HEIGHT/HEIGHT_STEP_SIZE)
 #define AMOUNT_MEASURED_POINTS      (MEASURED_LEVELS*MEASUREMENTS_PER_ROTATION) 
-
-//error-code defines
-#define NO_ERROR                0
-#define NO_SENSOR_FOUND         99
-#define ARRAY_OVERFLOW_ERROR    98
+#define DISTANCE_SENSOR_PLATE       25          // used for calibration
+#define DISC_MOTOR_SPEED            10          // delay between the HIGH and LOW signal for stepper motor (10 = fast, 100 = slow)
+#define THREADED_ROD_MOTOR_SPEED    10          // 
+#define OFFSET_LOWEST_LEVEL         100         // offset between lowest measured level and disk (avoids inacuraccy due to disk)
 
 
 
@@ -80,12 +70,22 @@ WebServer server(80);                 //default HTTP-Port
 /*                                                STRUCTS                                                      */
 /***************************************************************************************************************/
 
+typedef enum scan_state {INITIALISING, CALIBRATING, WAITING, RUNNING, FINISHED} scan_state;
+
+typedef enum scan_error_type {NONE = 0, NO_SENSOR_FOUND = 100, ARRAY_OVERFLOW_ERROR} scan_error_type;
+
+typedef enum button_state {NOT_PRESSED, PRESSED} button_state;
+
+
 typedef struct scan_handle{                                     
-  uint16_t alpha_mul_10[MEASUREMENTS_PER_ROTATION*MEASURED_LEVELS];          // alpha*10  -> reduce information loss due to integer calculation 
-  uint16_t radius_mul_10[MEASUREMENTS_PER_ROTATION*MEASURED_LEVELS];         // radius*10 -> reduce information loss due to integer calculation 
-  uint8_t height[MEASUREMENTS_PER_ROTATION*MEASURED_LEVELS];                 // height in mm 
-  uint8_t error;                                                             // saves Error Code when an error occurs. (NO_ERROR by default).
+  uint16_t alpha_mul_10[AMOUNT_MEASURED_POINTS];          // alpha*10  -> reduce information loss due to integer calculation 
+  uint16_t radius_mul_10[AMOUNT_MEASURED_POINTS];         // radius*10 -> reduce information loss due to integer calculation 
+  uint16_t height[AMOUNT_MEASURED_POINTS];                 // height in mm 
+  scan_error_type error;                                                             // saves Error Code when an error occurs. (NO_ERROR by default).
   uint    index;                                                             // Information about the current processed array data
+  scan_state state;
+  uint16_t progress;
+  button_state server_button_state;
 }scan_handle;
 
 
@@ -93,6 +93,7 @@ typedef struct scan_handle{
 typedef struct motor_handle{
   uint8_t step_pin;
   uint8_t dir_pin;
+  uint8_t speed;
 }motor_handle;
 
 
@@ -101,41 +102,50 @@ typedef struct motor_handle{
 /*                                                PROTOTYPES                                                   */
 /***************************************************************************************************************/
 
-void scan_prepare(scan_handle* xy);
+void scan_calibrate(scan_handle* xy);
 void scan_wait_for_start(scan_handle* xy);
 void scan_run(scan_handle* xy);
 void scan_finish(scan_handle* xy);
 void scan_error(scan_handle* xy);
-uint8_t button_state(void);
-uint8_t server_button_state(void);
-void measure_one_rotation(scan_handle* xy, uint8_t current_height);
-void step_motor(motor_handle* motor, uint8_t direction, uint8_t amount_of_steps);
-void display_scan_progress(uint8_t current_value, uint8_t max_value);
+button_state get_button_state(void);
+void measure_one_rotation(scan_handle* xy, uint16_t current_height);
+void step_motor(motor_handle* motor, uint8_t direction, uint16_t amount_of_steps);
+uint16_t display_scan_progress(uint16_t current_value, uint16_t max_value);
 void check_scan_error(scan_handle* xy);
 void transmit_matlab_code(scan_handle* xy);
 void reset_scan_handle(scan_handle* xy);
 
+String SendHTML_Download (scan_handle* xy);
 
 /***************************************************************************************************************/
 /*                                                VARIABLES                                                    */
 /***************************************************************************************************************/
 
-scan_handle current_scan = {{0}, {0}, {0}, NO_ERROR, 0};   // maybe init in loop ? -> faster access ?  
-motor_handle disc_motor = {STEP_PIN_1, DIR_PIN_1};
-motor_handle threaded_rod_motor = {STEP_PIN_2, DIR_PIN_2};
-LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);                // not sure if in setup or here ? -> test it 
+//Handles
+scan_handle current_scan = {{0}, {0}, {0}, NONE, 0, INITIALISING, 0, NOT_PRESSED};   
+motor_handle disc_motor = {STEP_PIN_1, DIR_PIN_1, DISC_MOTOR_SPEED};
+motor_handle threaded_rod_motor = {STEP_PIN_2, DIR_PIN_2, THREADED_ROD_MOTOR_SPEED};
+
+//IDK
+LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);                
 Adafruit_VL6180X vl = Adafruit_VL6180X();
 
-typedef enum scanState_from_server {ROOT_PREPARING, READY, SCAN, DOWNLOAD} scan_state;    //different phases of scanning routine
-scan_state serverState = (Scan_state) -1;  //type-cast muss                               //Global var for matching current scannin state from server
-                                    // '-> mit unzulässigem state initialisiert zum Starten des Scan-Vorgangs durch Verbindung zum Webserver
+//WebServer 
+const char* ssid = "3D-Scanner";      // Server name/SSID
+const char* password = "12345678";    // Server password
+button_state server_button_state = NOT_PRESSED;
+IPAddress local_ip(192,168,1,1);      // Sever default ip and stuff
+IPAddress gateway(192,168,1,1); 
+IPAddress subnet(255,255,255,0); 
+WebServer server(80);                 // default HTTP-Port
+
+
 
 /***************************************************************************************************************/
 /*                                                SETUP                                                        */
 /***************************************************************************************************************/
 
-void setup() {                // evtl in Funktionen auslagern ? serial_init(), lcd_init() .....
-
+void setup() {                
   //serial
   Wire.begin();
   Serial.begin(115200);
@@ -143,6 +153,22 @@ void setup() {                // evtl in Funktionen auslagern ? serial_init(), l
   while (!Serial) {           // wait for serial port to open on native usb devices
     delay(1);
   }
+
+  //Webserver
+  WiFi.softAP(ssid, password);
+  WiFi.softAPConfig(local_ip, gateway, subnet);
+  delay(100);
+
+  server.on("/",                  server_initialising);   // Landing-Page und INfos über Preparing zustand
+  server.on("/calibration",       server_calibrating);    // after finishing Scanner preparing-> start scan here with serverButton (Start Scan) click oder hardwareButton
+  server.on("/waiting",           server_waiting);        // showing Scan progress and generating button to copy MatLab-Code from next page
+  server.on("/running",           server_running);        // displaying MatLab Code with measurements to "download" (copy-paste) - also: restart whole procedure
+  server.on("/finished",          server_finished);
+  server.onNotFound(server_NotFound);                     // ungültige URL liefert E404
+  server.begin();
+  delay(100);
+  server.handleClient();
+  delay(100);
 
   //LCD
   lcd.begin(LCD_COLUMNS, LCD_ROWS);
@@ -159,24 +185,9 @@ void setup() {                // evtl in Funktionen auslagern ? serial_init(), l
   //Button
   pinMode(BUTTON, INPUT);
 
-   //**********Setup Soft Access Point für Webserver-Host auf ESP -> into: softAP_init()
-  WiFi.softAP(ssid, password);
-  WiFi.softAPConfig(local_ip, gateway, subnet);
-  delay(100);
-
-  //**********Server_handles aufrufen-> into: ON_2_handles()
-  server.on("/", handle_OnConnect);           //Landing-Page und INfos über Preparing zustand
-  server.on("/ready", handle_Ready4Scan);     //after finishing Scanner preparing-> start scan here with serverButton (Start Scan) click oder hardwareButton
-  server.on("/running", handle_RunningScan);   //showing Scan progress and generating button to copy MatLab-Code from next page
-  server.on("/download", handle_DownloadData);  //displaying MatLab Code with measurements to "download" (copy-paste) - also: restart whole procedure
-  server.onNotFound(handle_NotFound);           //ungültige URL liefert E404
-  server.begin();
-  Serial.println("HTTP server started");
-
-
   //VL6180x
   if (! vl.begin()) {
-    current_scan.error = NO_SENSOR_FOUND;               // error code for not founding sensor
+    current_scan.error = NO_SENSOR_FOUND;       // error code for not founding sensor
   }
 }
 
@@ -187,46 +198,11 @@ void setup() {                // evtl in Funktionen auslagern ? serial_init(), l
 /***************************************************************************************************************/
 
 void loop() {
-  /*  while(1){
-    uint tmp_data = 0;
-    for(uint16_t measurement = 1; measurement <= 200; measurement++){             // calculate average out of xxx repititions
-      tmp_data += vl.readRange();                                
-      //xy->error = vl.readRangeStatus();
-    }    
-    tmp_data = tmp_data/200;
-    Serial.println(tmp_data);
-    }*/
-
-  server.handleClient();                          //start specific http-requests        
-  //startet bei /root 
-
-  switch (scanState) {
-
-    case ROOT_PREPARING: //nach Button click bei /root
-      check_scan_error(&current_scan);
-      scan_prepare(&current_scan);               // LCD: "Initialisieren: Bitte noch kein Gegenstand auf Platte stellen !"    && setzt scanState nach Abschluss auf READY
-    break;
-
-    case READY: 
-      handle_Ready4Scan();
-      scan_wait_for_start(&current_scan);        // LCD: "Taste zum starten Drücken" && loop for button_state     && server_ready4Scan -> per taster oder ServerButton zu:
-    break;
-
-    case SCAN:
-      scan_run(&current_scan);                   // LCD: "Scanning... (PROGRESS BAR ?)" && MOTOR1/2 Drehen + VL6180x messen und in data speichern      && server_runningScan -> sobald abgeschlossen per ServerButton zu:
-    break;
-
-    case DOWNLOAD:
-      scan_finish(&current_scan);                // LCD: "Scan beendet. Übertrage Daten..."  -> scan_transmit ?      && server_download ->per button zu on connect zum neustarten
-    break;
-
-    default:  //Webserver nicht erfolgreich oder noch nicht aufgerufen
-      lcd.clear();
-      cd.print("Connect to Server");
-      Serial.println("default CASE");
-      delay(2500);
-    break;
-  }     
+  //check_scan_error(&current_scan);
+  scan_calibrate(&current_scan);             // LCD: "Initialisieren: Bitte noch kein Gegenstand auf Platte stellen !"    && setzt serverState nach Abschluss auf READY
+  scan_wait_for_start(&current_scan);        // LCD: "Taste zum starten Drücken" && loop for button_state     && server_ready4Scan -> per taster oder ServerButton zu:
+  scan_run(&current_scan);                   // LCD: "Scanning... (PROGRESS BAR ?)" && MOTOR1/2 Drehen + VL6180x messen und in data speichern      && server_runningScan -> sobald abgeschlossen per ServerButton zu:
+  scan_finish(&current_scan);                // LCD: "Scan beendet. Übertrage Daten..."  -> scan_transmit ?      && server_download ->per button zu on connect zum neustarten
 }
 
 
@@ -236,44 +212,55 @@ void loop() {
 /***************************************************************************************************************/
 /*vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv loop-state functions vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv*/
 
-void scan_prepare(scan_handle* xy){           // drive motor in correct position and calibrate reference distance init variables/data 
-  check_scan_error(xy);
-  //PLACEHOLDER
+void scan_calibrate(scan_handle* xy){           // drive motor in correct position and calibrate reference distance init variables/data 
+  xy->state = CALIBRATING;
+  server.handleClient();
+
   lcd.clear();
-  lcd.print("ph: scan_prepare");
+  lcd.print("Kalibrieren...");
   delay(2500);
-  //PLACEHOLDER
+  
   // calibration (raw)
-  while(vl.readRange() >= 25){
-    step_motor(&threaded_rod_motor, DOWN, 100);
+  int tmp = 0;
+  while((tmp = vl.readRange()) >= (DISTANCE_SENSOR_PLATE)){
+    step_motor(&threaded_rod_motor, DOWN, 50);
+    Serial.print("Aktuell gemessener Wert in calibration raw: ");
+    Serial.println(tmp);
+    server.handleClient();
   }
   delay(1000);
   uint16_t ref_distance = vl.readRange();
+  Serial.println("ref_distance:");
   Serial.println(ref_distance);
 
   // calibration (fine)
-  while(vl.readRange() <= (ref_distance+5)){
+  while((tmp=vl.readRange()) <= (ref_distance+10)){    // "+10" to balance out variance of sensor(1mm)
     step_motor(&threaded_rod_motor, UP, 1);
+    Serial.print("Aktuell gemessener Wert in calibration fine: ");
+    Serial.println(tmp);
+    server.handleClient();
     delay(100);
   }
-  ref_distance = vl.readRange();
-  Serial.println(ref_distance);
 
-  scanState = READY;
+  step_motor(&threaded_rod_motor, UP, OFFSET_LOWEST_LEVEL);      // Offset ->  to be sure, that not the edge of the plate is detected !
 }
 
 
-
 void scan_wait_for_start(scan_handle* xy){
-  check_scan_error(xy);
+  xy->state = WAITING;
+  server.handleClient();
 
   lcd.clear();
-  lcd.print("Zum Starten Taste");
+  lcd.print("Zum Starten");
   lcd.setCursor(0,1);
-  lcd.print("druecken.");
+  lcd.print("Taste druecken.");
 
-  //while( (!button_state()) || (!server_button_state()) ){ };      // wait until Button is pressed or Server sends Input
-  while( button_state() == 0 || serverState != SCAN){}; 
+  button_state tmp = NOT_PRESSED;
+  while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
+    server.handleClient();
+    tmp = server_button_state;
+  };
+  server_button_state = NOT_PRESSED;
 
   lcd.clear();
   lcd.print("Scan starten");
@@ -287,24 +274,44 @@ void scan_wait_for_start(scan_handle* xy){
 
 
 void scan_run(scan_handle* xy){
-  for(int current_height = 0; current_height < MAX_HEIGHT; current_height += HEIGHT_STEP_SIZE)
-  {           
-    check_scan_error(xy);
-    display_scan_progress(current_height, MAX_HEIGHT);              // maybe smarter to input index and sizeof array as parameter -> better percentage resolution
+  xy->state = RUNNING;
+  server.handleClient();
+  display_scan_progress(0, MAX_HEIGHT);
+
+  for(uint16_t current_height = 0; current_height < MAX_HEIGHT; current_height += HEIGHT_STEP_SIZE)
+  {    
+    static const uint16_t steps = (MEASUREMENTS_PER_ROTATION*HEIGHT_STEP_SIZE)/(THREADED_ROD_PITCH);
+    xy->progress = display_scan_progress(current_height, MAX_HEIGHT);
+    server.handleClient();
+
+    if(current_height != 0){
+      step_motor(&threaded_rod_motor, UP, steps);                     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
+      delay(10);
+    }
+
     measure_one_rotation(xy, current_height);
-    delay(10);
-    static uint16_t steps = (MEASUREMENTS_PER_ROTATION*HEIGHT_STEP_SIZE)/THREADED_ROD_PITCH;
-    step_motor(&threaded_rod_motor, UP, steps);                     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
-    delay(10);
+    delay(10);   
   }                                                                 // or 8mm/200steps  => 2mm/50steps
+  
+  xy->progress = display_scan_progress(MAX_HEIGHT, MAX_HEIGHT);
 }
 
 
 
 void scan_finish(scan_handle* xy){                // reset xy->error, data, index and transmit data
-  check_scan_error(xy);
+  xy->state = FINISHED;
+  server.handleClient();
+
   transmit_matlab_code(xy);
-  reset_scan_handle(xy);                          // data->{0}, index=0, error=0 ... 
+  
+  button_state tmp = NOT_PRESSED;
+  while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
+    server.handleClient();
+    tmp = server_button_state;
+  };
+  server_button_state = NOT_PRESSED;
+
+  reset_scan_handle(xy);
 }
 
 
@@ -320,51 +327,55 @@ void scan_error(scan_handle* xy){                 // print error code on LCD an 
   lcd.setCursor(0,1);
   lcd.print(xy->error);
   delay(2500);
-  xy->error = 0;
+  xy->error = NONE;
 }
+
 
 
 /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
 /*vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv Webserver functions vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv*/
 
-void handle_OnConnect() {
-  Serial.println("Start WebServer zur Kommunikation mit 3D-Laserscanner"); 
-  server.send(200, "text/html", SendHTML(serverState)); // SendHTML um Seite für entsprechende Zustände zu generieren
-  //Hier Ausgabe an Bildschirm mit Startup und Initialisierung und Button für calibration start
+void server_initialising(void) {
+  server.send(200, "text/html", SendHTML(&current_scan)); 
 }
 
-void handle_Ready4Scan() {
-  Serial.println("Ready4scan");
-  if (serverState = = -1); {
-    serverState = ROOT_PREPARING;
-  server.send(200, "text/html", SendHTML(serverState));
-  }
-  Serial.println("READY ZUSTAND");
-  server.send(200, "text/html", SendHTML(serverState));
+
+
+void server_calibrating(void) {
+  server_button_state = PRESSED;
+  current_scan.state = CALIBRATING;
+  server.send(200, "text/html", SendHTML(&current_scan)); 
 }
 
-void handle_RunningScan() {
-  Serial.println("running scan");
-  scanState = SCAN;
-  server.send(200, "text/html", SendHTML(serverState));
-  //SCAN_prog from number of stepps
+
+
+void server_waiting(void) {
+  server.send(200, "text/html", SendHTML(&current_scan)); 
 }
 
-void handle_DownloadData() {
-  Serial.println("download data");
-  //var SCAN_data init & nutzung usw... mit abfrage Messdaten und Ausgabe
-  SCAN_data = 1; //zum Test -> entspricht Scan ist fertig
-  server.send(200, "text/html", SendHTML_Download(SCAN_data)); //--> Neue SendHTML_download nötig 
 
-} 
 
-void handle_NotFound(){
+void server_running(void) {
+  server_button_state = PRESSED;
+  current_scan.state = RUNNING;
+  server.send(200, "text/html", SendHTML(&current_scan));
+}
+
+
+
+void server_finished(void) {
+  server.send(200, "text/html", SendHTML(&current_scan)); 
+}
+
+
+void server_NotFound(void){
   server.send(404, "text/plain", "Not found");
 }
 
-String SendHTML(Scan_state state){ //generiert Seite für entsprechenden handle-> für verschiedene Zwecke neuen SEndHTML, download data and progress displaying
-  
 
+
+String SendHTML(scan_handle* xy){
+  
   String ptr = "<!DOCTYPE html> <html>\n";  //indicates that  HTML-Code will be sent in the follwing  
   ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";   //für webbrowser
   ptr +="<title>3D-LaserScanner by mst2.se2</title>\n";  //title page w/ <title>-tag
@@ -382,106 +393,174 @@ String SendHTML(Scan_state state){ //generiert Seite für entsprechenden handle-
   ptr +="</head>\n";
   ptr +="</body>\n";
 
-  ptr +="<h1>3D-LaserScanner by mst2.se2 students</h1>\n";  //Webpage headings..
+  ptr +="<h1>3D-Scanner</h1>\n";  //Webpage headings..
    
   
-  if(scanState == -1) {   // using /root
-  ptr +="<h2>Web Application Using Access Point(AP) Mode From ESP32 WROOM connected to 3D-LaserScanner</h2>\n";
-    ptr +="<h3>Scanner needs to calibrate and prepare scanninc instrument..</h3>\n";
-
-   ptr +="<p>Start Instrument Boot Up</p><a class=\"button button-on\" href=\"/Ready4Scan\">START</a>\n"; 
+  if(xy->state == INITIALISING) { 
+    ptr +="<h2>Please wait</h2>\n";
+    ptr +="<h3>Initialising...</h3>\n";
+    ptr +="<a class=\"button button-on\" href=\"/\">Refresh</a>\n"; 
   } 
 
-  if (scanState == 0) {   // using /Ready4Scan
-    ptr +="<h2>Please wait before installing object!</h2>\n";
-    ptr +="<h3>Calibration is running..</h3>\n";
-
-   ptr +="<p>LOADING..</p><a class=\"button button-off\" href=\"/Ready4Scan\">Update</a>\n";
-  }
-  else {    
-    ptr +="<p>RADY</p><a class=\"button button-on\" href=\"/SCAN\">Start Scan</a>\n"; //->ANPASSEN
+  else if (xy->state == CALIBRATING) {
+    ptr +="<h2>Please wait</h2>\n";
+    ptr +="<h3>Calibrating...</h3>\n";
+    ptr +="<a class=\"button button-on\" href=\"/\">Refresh</a>\n"; 
   }
 
-  //if(scanProg)
-  //{//ptr +="<p>LED2 Status: ON</p><a class=\"button button-off\" href=\"/led2off\">OFF</a>\n";} -> ANPASSEN
-  //else
-  //{//ptr +="<p>LED2 Status: OFF</p><a class=\"button button-on\" href=\"/led2on\">ON</a>\n";} -> ANPASSEN
+  else if (xy->state == WAITING) {
+    ptr +="<h2>Calibration successfull!</h2>\n";
+    ptr +="<h3>Start scan by pushing button</h3>\n";
+
+    ptr +="<a class=\"button button-on\" href=\"/running\">Start Scan</a>\n"; 
+  } 
+
+  else if (xy->state == RUNNING){ 
+    ptr +="<h2>Scan running!</h2>\n";
+    ptr +="<h3>Current Progress: ";
+    ptr += xy->progress;
+    ptr += "%</h3>\n";
+    ptr +="<a class=\"button button-on\" href=\"/\">Refresh</a>\n"; 
+  } 
+
+  else if (xy->state == FINISHED){    // using /RunningScan
+    String tmp = SendHTML_Download(xy);
+    ptr += tmp;
+    ptr +="<a class=\"button button-on\" href=\"/calibration\">Reset Scan</a>\n"; 
+    xy->progress = 0;
+  }
 
   ptr +="</body>\n";
   ptr +="</html>\n";
   return ptr;
 }
 
+
+
+String SendHTML_Download (scan_handle* xy){
+  String rtn ="<h2>Scan finished</h2>\n";                   //AUSGABE MATLAB-CODE
+  rtn +="<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
+
+  //Ausgabe MatLab-Code
+  uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
+
+  rtn +="<p>alpha=[";
+  for(uint i=0; i<amount_array_elements; i++){
+    String tmp = String(xy->alpha_mul_10[i]);
+    
+    if(i != (amount_array_elements-1)){
+      rtn += tmp;
+      rtn +=",";
+    }
+    else{
+      rtn += tmp;
+      rtn +="]' * (pi/1800); </p>\n";             // divided by 10 due to information loss with integer processing
+    }
+  }
+
+  rtn +="<p>radius=[";
+  for(uint i=0; i<amount_array_elements; i++){
+    String tmp = String(xy->radius_mul_10[i]);;
+    if(i != (amount_array_elements-1)){
+      rtn += tmp;
+      rtn +=",";
+    }
+    else{
+      rtn += tmp;
+      rtn +="]' * (1/10);</p>\n";              // divided by 10 due to information loss with integer processing
+    }
+  }
+  
+  rtn +="<p>height=[";
+  for(int i=0; i<amount_array_elements; i++){
+    String tmp = String(xy->height[i]);
+    if(i != (amount_array_elements-1)){
+      rtn += tmp;
+      rtn +=",";
+    }
+    else{
+      rtn += tmp; 
+      rtn +="]' * (1/10);</p>\n";             // divided by 10 due to information loss with integer processing
+    }
+  }
+
+  rtn +="<p>[x y z] = pol2cart(alpha,radius,height);</p>\n";
+  rtn +="<p>plot3(x,y,z);</p>\n";
+
+  return rtn;
+}
+
+
+
 /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
 /*vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv private functions vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv*/
 
-uint8_t button_state(void){                   // returns information if button is pressed
-  return digitalRead(BUTTON);
+button_state get_button_state(void){                   // returns information if button is pressed
+  button_state tmp = NOT_PRESSED;
+  if(digitalRead(BUTTON)){
+    tmp = PRESSED;
+  };
+  return tmp;
 }
 
 
-uint8_t server_button_state(void){            // asks server if button is klicked. 
-  //PLACEHOLDER
-  return 0;                                   // returns button state: 0->no button klicked | 1->button klicked
-}
 
+void measure_one_rotation(scan_handle* xy, uint16_t current_height){                                   // measures one rotation and puts measured data*10 (avoids information loss due of integer calculation) in xy->alpha xy->radius & xy->heigh
 
-
-void measure_one_rotation(scan_handle* xy, uint8_t current_height){                                 // measures one rotation and puts measured data*10 (avoids information loose cause of integer calculation) in xy->alpha xy->radius & xy->height
-  for(uint16_t current_alpha = 0; current_alpha <3600; current_alpha += ANGLE_STEP_SIZE_MUL10)      // repeat untill 360 degree reached
+  for(uint16_t current_alpha = 0; current_alpha <3600; current_alpha += (ANGLE_STEP_SIZE_MUL10))      // repeat untill 360 degree reached
   {
     uint16_t tmp_data = 0;
-    for(uint16_t measurement = 1; measurement <= MEASUREMENTS_PER_POINT; measurement++){             // calculate average out of xxx repititions
+    for(uint16_t measurement = 1; measurement <= MEASUREMENTS_PER_POINT; measurement++){              // calculate average out of xxx repititions
       tmp_data += vl.readRange();                                
       //xy->error = vl.readRangeStatus();
     }       
 
     uint index = xy->index;
     xy->alpha_mul_10[index] = current_alpha;
-    xy->radius_mul_10[index] = (REFERENCE_DISTANCE_MUL10 - ( (tmp_data*10)/MEASUREMENTS_PER_POINT) );           // "*10" due to information lost processing with integers ************************************************IMPORTANT: CHECK IF DISTANCE IS TO HIGH !!! IF YES -> WRITE "0"
+    xy->radius_mul_10[index] = ((REFERENCE_DISTANCE_MUL10) - ( (tmp_data*10)/(MEASUREMENTS_PER_POINT)) );           // "*10" due to information lost processing with integers
     xy->height[index] = current_height;
     xy->index++;
     if(index > ((sizeof(xy->radius_mul_10))/sizeof(xy->radius_mul_10[0]))){    // check if size of array is big enough for data
       xy->error = ARRAY_OVERFLOW_ERROR;
     }
-    
+
     step_motor(&disc_motor, CLOCKWISE, 1);
-    
+    server.handleClient();
+    delay(100);
   }
 }
 
 
-void step_motor(motor_handle* motor, uint8_t direction, uint8_t amount_of_steps){
+
+void step_motor(motor_handle* motor, uint8_t direction, uint16_t amount_of_steps){      // steps motor clock-, counterclockwise 
   digitalWrite(motor->dir_pin, direction);
-  for(int i=0; i<amount_of_steps; i++){
+  for(uint16_t i=0; i<amount_of_steps; i++){     
     digitalWrite(motor->step_pin, HIGH);
-    delay(10);                                   // test different delays !
+    delay(motor->speed);                                   
     digitalWrite(motor->step_pin, LOW);
-    delay(10);                                   // test different delays !
+    delay(motor->speed);                                   
   }
 }
 
 
 
-void display_scan_progress(uint8_t current_value, uint8_t max_value){   // shows a progressbar in the bottom row and displays the percentage done 
-  if(!current_value){
-    lcd.clear();
-    lcd.print("Scanfortschritt:");
-  }
-
-  uint8_t progress_percent = (current_value*100)/(max_value);           // calculates current progress in percentage
-  uint8_t progress_scaled  = ((progress_percent*LCD_COLUMNS)/100);      // progress scaled to LCD screen
-
-  lcd.setCursor(progress_scaled,1); 
-  uint8_t st1 = ((LCD_COLUMNS-1)/2);
-  uint8_t st2 = ((LCD_COLUMNS-1)/2)+2;
-  if((progress_scaled<st1) ||(progress_scaled>st2)){      //progressbar, but in the middle a gap for displaying the percentage
-    lcd.print(".");
-  }
+uint16_t display_scan_progress(uint16_t current_value, uint16_t max_value){   // shows a progressbar in the bottom row and displays the percentage done 
+  lcd.clear();
+  lcd.print("Scanfortschritt:");
   
-  lcd.setCursor(((LCD_COLUMNS-1)/2),1);                       // show percentage in the middle of the row
-  lcd.print(progress_percent);
-  lcd.print("%");
+  uint16_t progress_percent = (current_value*100)/(max_value);           // calculates current progress in percentage
+  uint16_t progress_scaled  = ((progress_percent*LCD_COLUMNS)/100);      // progress scaled to LCD screen
+  
+  for(uint16_t i=0; i<=progress_scaled; i++){
+    lcd.setCursor(( (LCD_COLUMNS/2)-1 ),1);                       // show percentage in the middle of the row
+    lcd.print(progress_percent);
+    lcd.print("%");
+    if( (i<( (LCD_COLUMNS/2)-1 )) || (i>( (LCD_COLUMNS/2)+1 ))){
+      lcd.setCursor(i,1);
+      lcd.print(".");
+    }
+  }
+  return progress_percent;
 }
 
 
@@ -500,13 +579,13 @@ void transmit_matlab_code(scan_handle* xy){
   lcd.setCursor(0,1);
   lcd.print("Bitte warten.");
 
-  uint16_t amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
+  uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
   Serial.println(" ");
   Serial.println("Folgenden Code kopieren und in Matlab einfuegen:");
   Serial.println(" ");
 
   Serial.print("alpha=[");
-  for(int i=0; i<amount_array_elements; i++){
+  for(uint i=0; i<amount_array_elements; i++){
     if(i != (amount_array_elements-1)){
       Serial.print(xy->alpha_mul_10[i]);
       Serial.print(",");
@@ -519,7 +598,7 @@ void transmit_matlab_code(scan_handle* xy){
   Serial.println("");
   
   Serial.print("radius=[");
-  for(int i=0; i<amount_array_elements; i++){
+  for(uint i=0; i<amount_array_elements; i++){
     if(i != (amount_array_elements-1)){
       Serial.print(xy->radius_mul_10[i]);
       Serial.print(",");
@@ -532,7 +611,7 @@ void transmit_matlab_code(scan_handle* xy){
   Serial.println("");
 
   Serial.print("height=[");
-  for(int i=0; i<amount_array_elements; i++){
+  for(uint i=0; i<amount_array_elements; i++){
     if(i != (amount_array_elements-1)){
       Serial.print(xy->height[i]);
       Serial.print(",");
@@ -554,14 +633,17 @@ void transmit_matlab_code(scan_handle* xy){
 
 
 void reset_scan_handle(scan_handle* xy){
-  uint16_t amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));
+  uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));
 
-  for(int i=0; i<amount_array_elements; i++){
+  for(uint i=0; i<amount_array_elements; i++){
     xy->alpha_mul_10[i] = 0;
     xy->radius_mul_10[i] = 0;
     xy->height[i] = 0;
   }
-  xy->error = 0;
+  xy->error = NONE;
   xy->index = 0;
+  xy->state = CALIBRATING;
+  xy->progress = 0;
+  xy->server_button_state = NOT_PRESSED;
 }
 /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
