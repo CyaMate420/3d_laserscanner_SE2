@@ -47,9 +47,9 @@
 #define DOWN                0            
 
 // customazable defines
-#define HEIGHT_STEP_SIZE            10          // 2mm height difference between two measured levels
-#define MAX_HEIGHT                  10          // 50mm difference between plate and top measure level
-#define MEASUREMENTS_PER_POINT      10          // amount of measurement repititions per point
+#define HEIGHT_STEP_SIZE            2          // 2mm height difference between two measured levels
+#define MAX_HEIGHT                  40          // 50mm difference between plate and top measure level
+#define MEASUREMENTS_PER_POINT      50          // amount of measurement repititions per point
 
 // fixed defines
 #define ANGLE_STEP_SIZE_MUL10       18          // 1,8° per step (*10 -> due to improved performance with operating with integer)
@@ -618,14 +618,15 @@ void transmit_matlab_code(scan_handle* xy){
     }
     else{
       Serial.print(xy->height[i]);
-      Serial.print("]' * (1/10);");             // divided by 10 due to information loss with integer processing
+      //Serial.print("]' * (1/10);");             // divided by 10 due to information loss with integer processing
     }
   }
   Serial.println("");
 
   Serial.println("[x y z] = pol2cart(alpha,radius,height);");
   Serial.println("plot3(x,y,z);");
-  Serial.println(" ");
+  Serial.println("axis image;");
+  Serial.println("grid on;");
   Serial.println(" ");
   Serial.println(" ");
 }
