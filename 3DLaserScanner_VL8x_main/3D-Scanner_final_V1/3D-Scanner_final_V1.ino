@@ -47,15 +47,15 @@
 #define DOWN                0            
 
 // customazable defines
-#define HEIGHT_STEP_SIZE            10          // 2mm height difference between two measured levels
-#define MAX_HEIGHT                  10          // 50mm difference between plate and top measure level
-#define MEASUREMENTS_PER_POINT      10          // amount of measurement repititions per point
+#define HEIGHT_STEP_SIZE            2           // 2mm height difference between two measured levels
+#define MAX_HEIGHT                  130         // max measured distance between plate and top measure level (in mm)
+#define MEASUREMENTS_PER_POINT      50          // amount of measurement repititions per point
 
 // fixed defines
 #define ANGLE_STEP_SIZE_MUL10       18          // 1,8° per step (*10 -> due to improved performance with operating with integer)
 #define THREADED_ROD_PITCH          8           // in mm/360° (i.e. 8mm/360°)
-#define REFERENCE_DISTANCE_MUL10    750         // the distance between sensor and center of the rotating plate
-#define MAX_DISTANCE                1500        // the maximum distance between object and sensor -> above is error 
+#define REFERENCE_DISTANCE_MUL10    750         // the distance between sensor and center of the rotating plate *10
+#define MAX_DISTANCE                150         // the maximum distance between object and sensor -> above is error (in mm -> 150mm = 15cm)
 #define MEASUREMENTS_PER_ROTATION   (3600/ANGLE_STEP_SIZE_MUL10)         
 #define MEASURED_LEVELS             (MAX_HEIGHT/HEIGHT_STEP_SIZE)
 #define AMOUNT_MEASURED_POINTS      (MEASURED_LEVELS*MEASUREMENTS_PER_ROTATION) 
@@ -80,15 +80,23 @@ typedef enum button_state {NOT_PRESSED, PRESSED} button_state;
 typedef struct scan_handle{                                     
   uint16_t alpha_mul_10[AMOUNT_MEASURED_POINTS];          // alpha*10  -> reduce information loss due to integer calculation 
   uint16_t radius_mul_10[AMOUNT_MEASURED_POINTS];         // radius*10 -> reduce information loss due to integer calculation 
-  uint16_t height[AMOUNT_MEASURED_POINTS];                 // height in mm 
-  scan_error_type error;                                                             // saves Error Code when an error occurs. (NO_ERROR by default).
-  uint    index;                                                             // Information about the current processed array data
+  uint16_t height[AMOUNT_MEASURED_POINTS];                // height in mm 
+  scan_error_type error;                                  // saves Error Code when an error occurs. (NO_ERROR by default).
+  uint    index;                                          // Information about the current processed array data
   scan_state state;
   uint16_t progress;
   button_state server_button_state;
 }scan_handle;
 
-
+//**************************************************************************************************************************************************************************************************
+//**************************************************************************************************************************************************************************************************
+//**************************************************************************************************************************************************************************************************
+//**************************************************************************************************************************************************************************************************
+// uint8_t memory_test[AMOUNT_MEASURED_POINTS*16]={0};               // Anzahl aller Messpunkte *4(da max 4stellige Zahl -> 4bytes) *4(da alpha,radius, höhe, rest von String) 
+//**************************************************************************************************************************************************************************************************
+//**************************************************************************************************************************************************************************************************
+//**************************************************************************************************************************************************************************************************
+//**************************************************************************************************************************************************************************************************
 
 typedef struct motor_handle{
   uint8_t step_pin;
@@ -108,7 +116,7 @@ void scan_run(scan_handle* xy);
 void scan_finish(scan_handle* xy);
 void scan_error(scan_handle* xy);
 button_state get_button_state(void);
-void measure_one_rotation(scan_handle* xy, uint16_t current_height);
+uint8_t measure_one_rotation(scan_handle* xy, uint16_t current_height);
 void step_motor(motor_handle* motor, uint8_t direction, uint16_t amount_of_steps);
 uint16_t display_scan_progress(uint16_t current_value, uint16_t max_value);
 void check_scan_error(scan_handle* xy);
@@ -186,8 +194,10 @@ void setup() {
   pinMode(BUTTON, INPUT);
 
   //VL6180x
-  if (! vl.begin()) {
+  //if (! vl.begin()) {
+  while(! vl.begin()) {
     current_scan.error = NO_SENSOR_FOUND;       // error code for not founding sensor
+    server.handleClient();
   }
 }
 
@@ -198,7 +208,6 @@ void setup() {
 /***************************************************************************************************************/
 
 void loop() {
-  //check_scan_error(&current_scan);
   scan_calibrate(&current_scan);             // LCD: "Initialisieren: Bitte noch kein Gegenstand auf Platte stellen !"    && setzt serverState nach Abschluss auf READY
   scan_wait_for_start(&current_scan);        // LCD: "Taste zum starten Drücken" && loop for button_state     && server_ready4Scan -> per taster oder ServerButton zu:
   scan_run(&current_scan);                   // LCD: "Scanning... (PROGRESS BAR ?)" && MOTOR1/2 Drehen + VL6180x messen und in data speichern      && server_runningScan -> sobald abgeschlossen per ServerButton zu:
@@ -251,13 +260,27 @@ void scan_wait_for_start(scan_handle* xy){
   server.handleClient();
 
   lcd.clear();
-  lcd.print("Zum Starten");
+  lcd.print("ID: 3D-Scanner");
   lcd.setCursor(0,1);
-  lcd.print("Taste druecken.");
+  lcd.print("PW: 12345678");
 
   button_state tmp = NOT_PRESSED;
-  while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
+  //while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
+  while((tmp == NOT_PRESSED)){
+    lcd.clear();
+    lcd.print("ID: 3D-Scanner");
+    lcd.setCursor(0,1);
+    lcd.print("PW: 12345678");
     server.handleClient();
+    delay(1000);                                            // wenn nicht startet, hieran liegts !
+
+    lcd.clear();
+    lcd.print("Server-IP:");
+    lcd.setCursor(0,1);
+    lcd.print("192.168.1.1");
+    server.handleClient();
+    delay(1000);
+
     tmp = server_button_state;
   };
   server_button_state = NOT_PRESSED;
@@ -277,21 +300,24 @@ void scan_run(scan_handle* xy){
   xy->state = RUNNING;
   server.handleClient();
   display_scan_progress(0, MAX_HEIGHT);
+  uint8_t object_detected = 1;
 
   for(uint16_t current_height = 0; current_height < MAX_HEIGHT; current_height += HEIGHT_STEP_SIZE)
   {    
-    static const uint16_t steps = (MEASUREMENTS_PER_ROTATION*HEIGHT_STEP_SIZE)/(THREADED_ROD_PITCH);
-    xy->progress = display_scan_progress(current_height, MAX_HEIGHT);
-    server.handleClient();
+    if(object_detected){
+      static const uint16_t steps = (MEASUREMENTS_PER_ROTATION*HEIGHT_STEP_SIZE)/(THREADED_ROD_PITCH);
+      xy->progress = display_scan_progress(current_height, MAX_HEIGHT);
+      server.handleClient();
 
-    if(current_height != 0){
-      step_motor(&threaded_rod_motor, UP, steps);                     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
-      delay(10);
-    }
+      if(current_height != 0){
+        step_motor(&threaded_rod_motor, UP, steps);                     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
+        delay(10);
+      }
 
-    measure_one_rotation(xy, current_height);
-    delay(10);   
-  }                                                                 // or 8mm/200steps  => 2mm/50steps
+      object_detected = measure_one_rotation(xy, current_height);       // returns 0 if no object is deteceted (full rotation with invalid points)
+      delay(10);   
+    }                                                                 // or 8mm/200steps  => 2mm/50steps
+  }
   
   xy->progress = display_scan_progress(MAX_HEIGHT, MAX_HEIGHT);
 }
@@ -306,6 +332,10 @@ void scan_finish(scan_handle* xy){                // reset xy->error, data, inde
   
   button_state tmp = NOT_PRESSED;
   while( (get_button_state() == NOT_PRESSED) && (tmp == NOT_PRESSED)){
+    lcd.clear();
+    lcd.print("Server-IP:");
+    lcd.setCursor(0,1);
+    lcd.print("192.168.1.1");
     server.handleClient();
     tmp = server_button_state;
   };
@@ -442,7 +472,8 @@ String SendHTML_Download (scan_handle* xy){
   rtn +="<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
 
   //Ausgabe MatLab-Code
-  uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
+  //uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
+  uint amount_array_elements = (xy->index);
 
   rtn +="<p>alpha=[";
   for(uint i=0; i<amount_array_elements; i++){
@@ -505,29 +536,43 @@ button_state get_button_state(void){                   // returns information if
 
 
 
-void measure_one_rotation(scan_handle* xy, uint16_t current_height){                                   // measures one rotation and puts measured data*10 (avoids information loss due of integer calculation) in xy->alpha xy->radius & xy->heigh
+uint8_t measure_one_rotation(scan_handle* xy, uint16_t current_height){                                   // measures one rotation and puts measured data*10 (avoids information loss due of integer calculation) in xy->alpha xy->radius & xy->heigh
+  uint8_t rtn = 1;
+  uint check_level = 0;
 
-  for(uint16_t current_alpha = 0; current_alpha <3600; current_alpha += (ANGLE_STEP_SIZE_MUL10))      // repeat untill 360 degree reached
+  for(uint16_t current_alpha = 0; current_alpha <3600; current_alpha += (ANGLE_STEP_SIZE_MUL10))          // repeat untill 360 degree reached
   {
     uint16_t tmp_data = 0;
-    for(uint16_t measurement = 1; measurement <= MEASUREMENTS_PER_POINT; measurement++){              // calculate average out of xxx repititions
-      tmp_data += vl.readRange();                                
-      //xy->error = vl.readRangeStatus();
+
+    for(uint16_t measurement = 1; measurement <= MEASUREMENTS_PER_POINT; measurement++){                  // calculate average out of xxx repititions
+      uint16_t check_range = vl.readRange();
+      if(check_range < MAX_DISTANCE){                                                                     // if no valid distance is measured -> error = 0
+        tmp_data += check_range; 
+        check_level += tmp_data;
+      }
     }       
 
-    uint index = xy->index;
-    xy->alpha_mul_10[index] = current_alpha;
-    xy->radius_mul_10[index] = ((REFERENCE_DISTANCE_MUL10) - ( (tmp_data*10)/(MEASUREMENTS_PER_POINT)) );           // "*10" due to information lost processing with integers
-    xy->height[index] = current_height;
-    xy->index++;
-    if(index > ((sizeof(xy->radius_mul_10))/sizeof(xy->radius_mul_10[0]))){    // check if size of array is big enough for data
-      xy->error = ARRAY_OVERFLOW_ERROR;
+    if( (tmp_data != 0) && (tmp_data <MAX_DISTANCE)){      // save new measurepoint only if distance is not invalid (> max distance or 0)
+      uint index = xy->index;
+      xy->alpha_mul_10[index] = current_alpha;
+      xy->radius_mul_10[index] = ((REFERENCE_DISTANCE_MUL10) - ( (tmp_data*10)/(MEASUREMENTS_PER_POINT)) );           // "*10" due to information lost processing with integers
+      xy->height[index] = current_height;
+      xy->index++;
+      if(index > ((sizeof(xy->radius_mul_10))/sizeof(xy->radius_mul_10[0]))){    // check if size of array is big enough for data
+        xy->error = ARRAY_OVERFLOW_ERROR;
+      }
     }
 
     step_motor(&disc_motor, CLOCKWISE, 1);
     server.handleClient();
     delay(100);
   }
+
+  if(check_level == 0){     // return 0 if one level of invalid points are measuerd (no object detected !)
+    rtn = 0;
+  }
+
+  return rtn;
 }
 
 
@@ -575,7 +620,7 @@ void check_scan_error(scan_handle* xy){                // checks if error != 0, 
 
 void transmit_matlab_code(scan_handle* xy){
   lcd.clear();
-  lcd.print("Daten uebertragen.");
+  lcd.print("Uebertrage Daten");
   lcd.setCursor(0,1);
   lcd.print("Bitte warten.");
 
@@ -618,14 +663,15 @@ void transmit_matlab_code(scan_handle* xy){
     }
     else{
       Serial.print(xy->height[i]);
-      Serial.print("]' * (1/10);");             // divided by 10 due to information loss with integer processing
+      //Serial.print("]' * (1/10);");             // divided by 10 due to information loss with integer processing
     }
   }
   Serial.println("");
 
   Serial.println("[x y z] = pol2cart(alpha,radius,height);");
   Serial.println("plot3(x,y,z);");
-  Serial.println(" ");
+  Serial.println("axis image;");
+  Serial.println("grid on;");
   Serial.println(" ");
   Serial.println(" ");
 }
