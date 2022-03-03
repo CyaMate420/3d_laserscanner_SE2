@@ -48,7 +48,7 @@
 
 // customazable defines
 #define HEIGHT_STEP_SIZE            10          // 2mm height difference between two measured levels
-#define MAX_HEIGHT                  65          // 50mm difference between plate and top measure level
+#define MAX_HEIGHT                  60         // 50mm difference between plate and top measure level
 #define MEASUREMENTS_PER_POINT      50          // amount of measurement repititions per point
 
 // fixed defines
