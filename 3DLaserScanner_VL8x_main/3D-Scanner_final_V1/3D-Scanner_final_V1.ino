@@ -470,10 +470,11 @@ String SendHTML(scan_handle* xy){
 String SendHTML_Download (scan_handle* xy){
   String rtn ="<h2>Scan finished</h2>\n";                   //AUSGABE MATLAB-CODE
   rtn +="<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
-
+  
   //Ausgabe MatLab-Code
   //uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal ! 
   uint amount_array_elements = (xy->index);
+  rtn +="<p>load census; steps=200;</p>\n";
 
   rtn +="<p>alpha=[";
   for(uint i=0; i<amount_array_elements; i++){
@@ -515,8 +516,47 @@ String SendHTML_Download (scan_handle* xy){
     }
   }
 
-  rtn +="<p>[x y z] = pol2cart(alpha,radius,height);</p>\n";
-  rtn +="<p>plot3(x,y,z);</p>\n";
+  rtn +="<p>H=length(height)/steps;</p>\n";
+  rtn +="<p>alpha2=zeros(H,steps);</p>\n";
+  rtn +="<p>radius2=zeros(H,steps);</p>\n";
+  rtn +="<p>height2=zeros(H,steps);</p>\n";
+  rtn +="<p>g=zeros(H,steps);</p>\n";
+  rtn +="<p>alpha3=zeros(H,steps+1);</p>\n";
+  rtn +="<p>radius3=zeros(H,steps+1);</p>\n";
+  rtn +="<p>height3=zeros(H,steps+1);</p>\n";
+
+  rtn+="p=0.95; %0.999588014026132;</p>\n";
+  rtn +="<p>xxi=(0:2*pi/steps:(2*pi-(2*pi/steps)));</p>\n";
+  rtn +="<p>for i=1:H</p>\n";
+      rtn +="<p>for j=1:steps</p>\n";
+      rtn +="<p>alpha2(i,j)=alpha(j+(i-1)*steps,1);</p>\n";
+      rtn +="<p>radius2(i,j)=radius(j+(i-1)*steps,1);</p>\n";
+      rtn +="<p>height2(i,j)=height(j+(i-1)*steps,1);</p>\n";
+      rtn +="<p>end</p>\n";
+  rtn +="<p>end</p>\n";
+  rtn +="<p>for i=1:1:H</p>\n";
+      rtn +="<p>g(i,:)=csaps(alpha2(i,:), radius2(i,:), p, xxi);</p>\n";
+  rtn +="<p>end</p>\n";
+
+
+  rtn +="<p>alpha3(:,steps+1)=alpha2(:,1);</p>\n";
+  rtn +="<p>radius3(:,steps+1)=g(:,1);</p>\n";
+  rtn +="<p>height3(:,steps+1)=height2(:,1);</p>\n";
+
+  rtn +="<p>for i=1:H</p>\n";
+      rtn +="<p>for j=1:steps</p>\n";
+      rtn +="<p>alpha3(i,j)=alpha2(i,j);</p>\n";
+      rtn +="<p>radius3(i,j)=g(i,j);</p>\n";
+      rtn +="<p>height3(i,j)=height2(i,j);</p>\n";
+      rtn +="<p>end</p>\n";
+  rtn +="<p>end</p>\n";
+
+  rtn +="<p>[x,y,z]=pol2cart(alpha3,radius3,height3);</p>\n";
+
+  rtn +="<p>surf (x,y,z)</p>\n";
+
+  //rtn +="<p>[x y z] = pol2cart(alpha,radius,height);</p>\n";
+  //rtn +="<p>plot3(x,y,z);</p>\n";
 
   return rtn;
 }
