@@ -1,5 +1,5 @@
 //formatierte 3D-Scanner .ino
-// 07/03/2022 19:22
+// 07/03/2022 23:05
 
 /***************************************************************************************************************/
 /*                                                INCLUDES                                                     */
@@ -18,14 +18,14 @@
 /*vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv GPIO-PINS vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv*/
 
 //Button
-#define BUTTON 5  // Button pin
-#define POTI   34
+#define BUTTON  5  // Button pin
+#define POTI    34
 
 //Stepper motor
-#define STEP_PIN_1 32  // Motor1 step pin  (disc)
-#define DIR_PIN_1 33   // Motor1 direction pin (disc)
-#define STEP_PIN_2 26  // Motor2 step pin  (threaded rod)
-#define DIR_PIN_2 27   // Motor2 direction pin (threaded rod)
+#define STEP_PIN_1  32  // Motor1 step pin  (disc)
+#define DIR_PIN_1   33  // Motor1 direction pin (disc)
+#define STEP_PIN_2  26  // Motor2 step pin  (threaded rod)
+#define DIR_PIN_2   27  // Motor2 direction pin (threaded rod)
 
 //LCD
 #define RS 19  // LCD RS pin
@@ -39,25 +39,25 @@
 /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
 
 //LCD defines
-#define LCD_COLUMNS 16  // amount of columns LCD-screen
-#define LCD_ROWS 2      // amount of rows LCD-screen
+#define LCD_COLUMNS               16     // amount of columns LCD-screen
+#define LCD_ROWS                  2      // amount of rows LCD-screen
 
 //motor defines
-#define CLOCKWISE 1
-#define COUNTERCLOCKWISE 0
-#define UP 1
-#define DOWN 0
+#define CLOCKWISE                 1
+#define COUNTERCLOCKWISE          0
+#define UP                        1
+#define DOWN                      0
 
 // customazable defines
-#define HEIGHT_STEP_SIZE        2         // 2mm height difference between two measured levels
-#define MAX_HEIGHT              120       // 50mm difference between plate and top measure level
-#define MEASUREMENTS_PER_POINT  1         // amount of measurement repititions per point
+#define HEIGHT_STEP_SIZE          2       // 2mm height difference between two measured levels
+#define MAX_HEIGHT                120     // 50mm difference between plate and top measure level
+#define MEASUREMENTS_PER_POINT    1       // amount of measurement repititions per point
 
 // fixed defines
 #define ANGLE_STEP_SIZE_MUL10     18      // 1,8° per step (*10 -> due to improved performance with operating with integer)
-#define THREADED_ROD_PITCH        8          // in mm/360° (i.e. 8mm/360°)
-#define REFERENCE_DISTANCE_MUL10  750  // the distance between sensor and center of the rotating plate
-#define MAX_DISTANCE              1500             // the maximum distance between object and sensor -> above is error
+#define THREADED_ROD_PITCH        8       // in mm/360° (i.e. 8mm/360°)
+#define REFERENCE_DISTANCE_MUL10  750     // the distance between sensor and center of the rotating plate
+#define MAX_DISTANCE              1500    // the maximum distance between object and sensor -> above is error
 #define MEASUREMENTS_PER_ROTATION (3600 / ANGLE_STEP_SIZE_MUL10)
 #define MEASURED_LEVELS           (MAX_HEIGHT / HEIGHT_STEP_SIZE)
 #define AMOUNT_MEASURED_POINTS    (MEASURED_LEVELS * MEASUREMENTS_PER_ROTATION)
@@ -124,7 +124,12 @@ void check_scan_error(scan_handle* xy);
 void transmit_matlab_code(scan_handle* xy);
 void reset_scan_handle(scan_handle* xy);
 
-String SendHTML_Download(scan_handle* xy);
+String SendAlpha(scan_handle* xy);
+String SendRadius(scan_handle* xy);
+String SendHeight(scan_handle* xy);
+String SendRest(void);
+
+
 
 /***************************************************************************************************************/
 /*                                                VARIABLES                                                    */
@@ -150,6 +155,8 @@ WebServer server(80);  // default HTTP-Port
 
 int analog = MAX_HEIGHT;
 
+
+
 /***************************************************************************************************************/
 /*                                                SETUP                                                        */
 /***************************************************************************************************************/
@@ -166,10 +173,9 @@ void setup() {
   //Webserver
   WiFi.softAP(ssid, password);
   WiFi.softAPConfig(local_ip, gateway, subnet);
-  //server.setContentLength(150000);  
   delay(100);
 
-  server.on("/", server_initialising);            // Landing-Page und INfos über Preparing zustand
+  server.on("/", server_initialising);            // Landing-Page und Infos über Preparing zustand
   server.on("/calibration", server_calibrating);  // after finishing Scanner preparing-> start scan here with serverButton (Start Scan) click oder hardwareButton
   server.on("/waiting", server_waiting);          // showing Scan progress and generating button to copy MatLab-Code from next page
   server.on("/running", server_running);          // displaying MatLab Code with measurements to "download" (copy-paste) - also: restart whole procedure
@@ -198,6 +204,7 @@ void setup() {
   //VL6180x
   if (!vl.begin()) {
     current_scan.error = NO_SENSOR_FOUND;  // error code for not founding sensor
+    check_scan_error(&current_scan);
   }
 }
 
@@ -268,7 +275,6 @@ void scan_wait_for_start(scan_handle* xy) {
     server.handleClient();
     tmp = server_button_state;
 
-    
     analog = analogRead(POTI);
     analog = map(analog,0,4096,0,MAX_HEIGHT);
 
@@ -301,13 +307,13 @@ void scan_run(scan_handle* xy) {
     server.handleClient();
 
     if (current_height != 0) {
-      step_motor(&threaded_rod_motor, UP, steps);  // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
+      step_motor(&threaded_rod_motor, UP, steps);     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
       delay(10);
     }
 
     measure_one_rotation(xy, current_height);
     delay(10);
-  }  // or 8mm/200steps  => 2mm/50steps
+  }
 
   xy->progress = display_scan_progress(analog, analog);
 }
@@ -318,7 +324,17 @@ void scan_finish(scan_handle* xy) {  // reset xy->error, data, index and transmi
   xy->state = FINISHED;
   server.handleClient();
 
+  lcd.clear();
+  lcd.print("Uebertrage Daten.");
+  lcd.setCursor(0, 1);
+  lcd.print("Bitte warten.");
+
   transmit_matlab_code(xy);
+
+  lcd.clear();
+  lcd.print("Daten uebertragen.");
+  lcd.setCursor(0, 1);
+  lcd.print("Nochmal scannen?");
 
   button_state tmp = NOT_PRESSED;
   while ((tmp == NOT_PRESSED)) {
@@ -355,21 +371,15 @@ void server_initialising(void) {
   server.send(200, "text/html", SendHTML(&current_scan));
 }
 
-
-
 void server_calibrating(void) {
   server_button_state = PRESSED;
   current_scan.state = CALIBRATING;
   server.send(200, "text/html", SendHTML(&current_scan));
 }
 
-
-
 void server_waiting(void) {
   server.send(200, "text/html", SendHTML(&current_scan));
 }
-
-
 
 void server_running(void) {
   server_button_state = PRESSED;
@@ -377,25 +387,25 @@ void server_running(void) {
   server.send(200, "text/html", SendHTML(&current_scan));
 }
 
-
-
 void server_finished(void) {
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.sendHeader("Content-Length", (String)200000);
-  server.send(200, "text/html", "");
-  String tmp = SendHTML(&current_scan);
-
-  //int size = sizeof(tmp);
-  //Serial.print("size :");
-  //Serial.print(size);
-  //server.sendContent_P( SendHTML(&current_scan));
-  server.sendContent(tmp);
+  server.send ( 200, "text/html", SendHTML(&current_scan));         // ersten Teil der Website senden
+  server.sendContent(SendAlpha(&current_scan));
+  server.sendContent(SendRadius(&current_scan));
+  server.sendContent(SendHeight(&current_scan));
+  server.sendContent(SendRest());
+  server.sendContent("");
 }
-
 
 void server_NotFound(void) {
   server.send(404, "text/plain", "Not found");
 }
+
+
+
+
+
+
 
 
 
@@ -404,43 +414,39 @@ String SendHTML(scan_handle* xy) {
   String ptr = "<!DOCTYPE html> <html>\n";                                                                        //indicates that  HTML-Code will be sent in the follwing
   ptr += "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";  //für webbrowser
   ptr += "<title>3D-LaserScanner by mst2.se2</title>\n";                                                          //title page w/ <title>-tag
-
   ptr += "<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";                                                       //Desgin Einstellungen Webpage
   ptr += "body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;} h2 {color: #444444;margin: 50px auto 30px;} h3 {color: #444444;margin-bottom: 50px;}\n";  //Layout
-
   ptr += ".button {display: block;width: 80px;background-color: #3498db;border: none;color: white;padding: 13px 30px;text-decoration: none;font-size: 25px;margin: 0px auto 35px;cursor: pointer;border-radius: 4px;}\n";  //Button design allgemein
   ptr += ".button-on {background-color: #3498db;}\n";                                                                                                                                                                      //button aussehen
   ptr += ".button-on:active {background-color: #2980b9;}\n";                                                                                                                                                               //button wenn geklickt
-
   ptr += "p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";  //Layout
-
   ptr += "</style>\n";
   ptr += "</head>\n";
   ptr += "</body>\n";
-
   ptr += "<h1>3D-Scanner</h1>\n";  //Webpage headings..
-
 
   if (xy->state == INITIALISING) {
     ptr += "<h2>Please wait</h2>\n";
     ptr += "<h3>Initialising...</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
-
+    ptr += "</body>\n";
+    ptr += "</html>\n";
   }
 
   else if (xy->state == CALIBRATING) {
     ptr += "<h2>Please wait</h2>\n";
     ptr += "<h3>Calibrating...</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
-
+    ptr += "</body>\n";
+    ptr += "</html>\n";
   }
 
   else if (xy->state == WAITING) {
     ptr += "<h2>Calibration successfull!</h2>\n";
     ptr += "<h3>Start scan by pushing button</h3>\n";
-
     ptr += "<a class=\"button button-on\" href=\"/running\">Start Scan</a>\n";
-    
+    ptr += "</body>\n";
+    ptr += "</html>\n";
   }
 
   else if (xy->state == RUNNING) {
@@ -449,33 +455,37 @@ String SendHTML(scan_handle* xy) {
     ptr += xy->progress;
     ptr += "%</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
+    ptr += "</body>\n";
+    ptr += "</html>\n";
 
   }
 
   else if (xy->state == FINISHED) {  // using /RunningScan
-    String tmp = SendHTML_Download(xy);
-    ptr += tmp;
-    ptr += "<a class=\"button button-on\" href=\"/calibration\">Reset Scan</a>\n";
     xy->progress = 0;
   }
 
-  ptr += "</body>\n";
-  ptr += "</html>\n";
   return ptr;
 }
 
 
 
-String SendHTML_Download(scan_handle* xy) {
-  String rtn = "<h2>Scan finished</h2>\n";  //AUSGABE MATLAB-CODE
-  rtn += "<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
 
-  //Ausgabe MatLab-Code
-  //uint amount_array_elements = (sizeof(xy->alpha_mul_10))/(sizeof(xy->alpha_mul_10[0]));      // data of alpha, radius and height has to be equal !
+
+
+
+
+
+
+
+
+String SendAlpha(scan_handle* xy) {
   uint amount_array_elements = (xy->index);
-  rtn += "<p>load census; steps=200;</p>\n";
+  String rtn = "<h2>Scan finished</h2>\n";
 
+  rtn += "<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
+  rtn += "<p>load census; steps=200;</p>\n";
   rtn += "<p>alpha=[";
+
   for (uint i = 0; i < amount_array_elements; i++) {
     String tmp = String(xy->alpha_mul_10[i]);
 
@@ -488,7 +498,13 @@ String SendHTML_Download(scan_handle* xy) {
     }
   }
 
-  rtn += "<p>radius=[";
+  return rtn;
+}
+
+String SendRadius(scan_handle* xy) {
+  uint amount_array_elements = (xy->index);
+  String rtn = "<p>radius=[";
+
   for (uint i = 0; i < amount_array_elements; i++) {
     String tmp = String(xy->radius_mul_10[i]);
     
@@ -501,7 +517,13 @@ String SendHTML_Download(scan_handle* xy) {
     }
   }
 
-  rtn += "<p>height=[";
+  return rtn;
+}
+
+String SendHeight(scan_handle* xy){
+  uint amount_array_elements = (xy->index);
+  String rtn = "<p>height=[";
+
   for (int i = 0; i < amount_array_elements; i++) {
     String tmp = String(xy->height[i]);
     if (i != (amount_array_elements - 1)) {
@@ -513,7 +535,12 @@ String SendHTML_Download(scan_handle* xy) {
     }
   }
 
-  rtn += "<p>H=length(height)/steps;</p>\n";
+  return rtn;
+}
+
+String SendRest(void){
+  String rtn = "<p>H=length(height)/steps;</p>\n";
+
   rtn += "<p>alpha2=zeros(H,steps);</p>\n";
   rtn += "<p>radius2=zeros(H,steps);</p>\n";
   rtn += "<p>height2=zeros(H,steps);</p>\n";
@@ -521,8 +548,7 @@ String SendHTML_Download(scan_handle* xy) {
   rtn += "<p>alpha3=zeros(H,steps+1);</p>\n";
   rtn += "<p>radius3=zeros(H,steps+1);</p>\n";
   rtn += "<p>height3=zeros(H,steps+1);</p>\n";
-
-  rtn += "p=0.95;</p>\n";
+  rtn += "<p>p=0.95;</p>\n";
   rtn += "<p>xxi=(0:2*pi/steps:(2*pi-(2*pi/steps)));</p>\n";
   rtn += "<p>for i=1:H</p>\n";
   rtn += "<p>for j=1:steps</p>\n";
@@ -534,12 +560,9 @@ String SendHTML_Download(scan_handle* xy) {
   rtn += "<p>for i=1:1:H</p>\n";
   rtn += "<p>g(i,:)=csaps(alpha2(i,:), radius2(i,:), p, xxi);</p>\n";
   rtn += "<p>end</p>\n";
-
-
   rtn += "<p>alpha3(:,steps+1)=alpha2(:,1);</p>\n";
   rtn += "<p>radius3(:,steps+1)=g(:,1);</p>\n";
   rtn += "<p>height3(:,steps+1)=height2(:,1);</p>\n";
-
   rtn += "<p>for i=1:H</p>\n";
   rtn += "<p>for j=1:steps</p>\n";
   rtn += "<p>alpha3(i,j)=alpha2(i,j);</p>\n";
@@ -547,13 +570,67 @@ String SendHTML_Download(scan_handle* xy) {
   rtn += "<p>height3(i,j)=height2(i,j);</p>\n";
   rtn += "<p>end</p>\n";
   rtn += "<p>end</p>\n";
-
   rtn += "<p>[x,y,z]=pol2cart(alpha3,radius3,height3);</p>\n";
-
   rtn += "<p>surf (x,y,z)</p>\n";
+
+  rtn += "<a class=\"button button-on\" href=\"/calibration\">Reset Scan</a>\n";
+  rtn += "</body>\n";
+  rtn += "</html>\n";
 
   return rtn;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -639,10 +716,6 @@ void check_scan_error(scan_handle* xy) {  // checks if error != 0, if yes displa
 
 
 void transmit_matlab_code(scan_handle* xy) {
-  lcd.clear();
-  lcd.print("Daten uebertragen.");
-  lcd.setCursor(0, 1);
-  lcd.print("Bitte warten.");
 
   //uint amount_array_elements = (sizeof(xy->alpha_mul_10)) / (sizeof(xy->alpha_mul_10[0]));  // data of alpha, radius and height has to be equal !
   uint amount_array_elements = xy->index;
