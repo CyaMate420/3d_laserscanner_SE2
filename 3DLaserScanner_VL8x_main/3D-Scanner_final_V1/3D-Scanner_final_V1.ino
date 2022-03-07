@@ -1,5 +1,5 @@
 //formatierte 3D-Scanner .ino
-// 07/03/2022 17:53
+// 07/03/2022 19:22
 
 /***************************************************************************************************************/
 /*                                                INCLUDES                                                     */
@@ -380,7 +380,16 @@ void server_running(void) {
 
 
 void server_finished(void) {
-  server.send(200, "text/html", SendHTML(&current_scan));
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.sendHeader("Content-Length", (String)200000);
+  server.send(200, "text/html", "");
+  String tmp = SendHTML(&current_scan);
+
+  //int size = sizeof(tmp);
+  //Serial.print("size :");
+  //Serial.print(size);
+  //server.sendContent_P( SendHTML(&current_scan));
+  server.sendContent(tmp);
 }
 
 
@@ -417,8 +426,6 @@ String SendHTML(scan_handle* xy) {
     ptr += "<h3>Initialising...</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
 
-    ptr += "</body>\n";
-  ptr += "</html>\n";
   }
 
   else if (xy->state == CALIBRATING) {
@@ -426,8 +433,6 @@ String SendHTML(scan_handle* xy) {
     ptr += "<h3>Calibrating...</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
 
-    ptr += "</body>\n";
-  ptr += "</html>\n";
   }
 
   else if (xy->state == WAITING) {
@@ -436,8 +441,6 @@ String SendHTML(scan_handle* xy) {
 
     ptr += "<a class=\"button button-on\" href=\"/running\">Start Scan</a>\n";
     
-    ptr += "</body>\n";
-    ptr += "</html>\n";
   }
 
   else if (xy->state == RUNNING) {
@@ -447,8 +450,6 @@ String SendHTML(scan_handle* xy) {
     ptr += "%</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
 
-    ptr += "</body>\n";
-    ptr += "</html>\n";
   }
 
   else if (xy->state == FINISHED) {  // using /RunningScan
@@ -456,11 +457,10 @@ String SendHTML(scan_handle* xy) {
     ptr += tmp;
     ptr += "<a class=\"button button-on\" href=\"/calibration\">Reset Scan</a>\n";
     xy->progress = 0;
-
-    ptr += "</body>\n";
-    ptr += "</html>\n";
   }
 
+  ptr += "</body>\n";
+  ptr += "</html>\n";
   return ptr;
 }
 
@@ -552,9 +552,6 @@ String SendHTML_Download(scan_handle* xy) {
 
   rtn += "<p>surf (x,y,z)</p>\n";
 
-  //rtn +="<p>[x y z] = pol2cart(alpha,radius,height);</p>\n";
-  //rtn +="<p>plot3(x,y,z);</p>\n";
-
   return rtn;
 }
 
@@ -581,7 +578,6 @@ void measure_one_rotation(scan_handle* xy, uint16_t current_height) {  // measur
     for (uint16_t measurement = 1; measurement <= MEASUREMENTS_PER_POINT; measurement++) {  // calculate average out of xxx repititions
       tmp_data += vl.readRange();
       Serial.println(tmp_data);
-      //xy->error = vl.readRangeStatus();
     }
 
     uint index = xy->index;
