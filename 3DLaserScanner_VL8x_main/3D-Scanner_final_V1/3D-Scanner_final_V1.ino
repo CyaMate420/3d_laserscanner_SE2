@@ -1,5 +1,5 @@
 //formatierte 3D-Scanner .ino
-// 08/03/22 stand 15:20
+// 08/03/22 stand 19:13
 
 /***************************************************************************************************************/
 /*                                                INCLUDES                                                     */
@@ -49,9 +49,9 @@
 #define DOWN                      0
 
 // customazable defines
-#define HEIGHT_STEP_SIZE          2       // 2mm height difference between two measured levels
-#define MAX_HEIGHT                120     // 50mm difference between plate and top measure level
-#define MEASUREMENTS_PER_POINT    1       // amount of measurement repititions per point
+#define HEIGHT_STEP_SIZE          4       // 2mm height difference between two measured levels
+#define MAX_HEIGHT                160     // 50mm difference between plate and top measure level
+#define MEASUREMENTS_PER_POINT    5       // amount of measurement repititions per point
 
 // fixed defines
 #define ANGLE_STEP_SIZE_MUL10     18      // 1,8° per step (*10 -> due to improved performance with operating with integer)
@@ -275,18 +275,23 @@ void scan_wait_for_start(scan_handle* xy) {
   lcd.print("Objekthoehe:");
   lcd.setCursor(0, 1);
 
+  int counter = 0;
   button_state tmp = NOT_PRESSED;
   while ((tmp == NOT_PRESSED)) {
+    counter ++;
     server.handleClient();
     tmp = server_button_state;
 
     analog = analogRead(POTI);
-    analog = map(analog,0,4096,0,MAX_HEIGHT);
+    analog = map(analog,0,4096,2,MAX_HEIGHT);
 
-    lcd.setCursor(0, 1);  
-    lcd.print(analog);
-    lcd.print("mm       ");
-    Serial.println(analog);
+    if(counter == 100){
+      lcd.setCursor(0, 1);  
+      lcd.print(analog);
+      lcd.print("mm       ");
+      Serial.println(analog);
+      counter = 0;
+    }
   };
   server_button_state = NOT_PRESSED;
 
@@ -313,7 +318,7 @@ void scan_run(scan_handle* xy) {
 
     if (current_height != 0) {
       step_motor(&threaded_rod_motor, UP, steps);     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
-      //delay(10);
+      delay(10);
     }
 
     measure_one_rotation(xy, current_height);
