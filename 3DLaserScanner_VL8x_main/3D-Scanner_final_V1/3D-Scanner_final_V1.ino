@@ -1,5 +1,5 @@
 //formatierte 3D-Scanner .ino
-// 07/03/2022 23:05
+// 08/03/22 stand 15:20
 
 /***************************************************************************************************************/
 /*                                                INCLUDES                                                     */
@@ -64,7 +64,7 @@
 #define DISTANCE_SENSOR_PLATE     25       // used for calibration
 #define DISC_MOTOR_SPEED          10       // delay between the HIGH and LOW signal for stepper motor (10 = fast, 100 = slow)
 #define THREADED_ROD_MOTOR_SPEED  10       //
-#define OFFSET_LOWEST_LEVEL       100      // offset between lowest measured level and disk (avoids inacuraccy due to disk)
+#define OFFSET_LOWEST_LEVEL       50      // offset between lowest measured level and disk (avoids inacuraccy due to disk)
 
 
 
@@ -240,12 +240,17 @@ void scan_calibrate(scan_handle* xy) {  // drive motor in correct position and c
   int tmp = 0;
   while ((tmp = vl.readRange()) >= (DISTANCE_SENSOR_PLATE)) {
     step_motor(&threaded_rod_motor, DOWN, 50);
-    Serial.print("Aktuell gemessener Wert in calibration raw: ");
-    Serial.println(tmp);
+    //Serial.print("Aktuell gemessener Wert in calibration raw: ");
+    //Serial.println(tmp);
     server.handleClient();
   }
   delay(1000);
-  uint16_t ref_distance = vl.readRange();
+
+  uint16_t ref_distance = 0;
+  for(int i=0; i<200; i++){
+    ref_distance += vl.readRange();
+  }
+  ref_distance = ref_distance/200;
   Serial.println("ref_distance:");
   Serial.println(ref_distance);
 
@@ -308,11 +313,11 @@ void scan_run(scan_handle* xy) {
 
     if (current_height != 0) {
       step_motor(&threaded_rod_motor, UP, steps);     // depends on threaded rod pitch (Gewindesteigung) i.e. Tr8*8(P2) -> 8mm/360° => 50 steps for 2mm in height
-      delay(10);
+      //delay(10);
     }
 
     measure_one_rotation(xy, current_height);
-    delay(10);
+    //delay(10);
   }
 
   xy->progress = display_scan_progress(analog, analog);
@@ -388,13 +393,7 @@ void server_running(void) {
 }
 
 void server_finished(void) {
-  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send ( 200, "text/html", SendHTML(&current_scan));         // ersten Teil der Website senden
-  server.sendContent(SendAlpha(&current_scan));
-  server.sendContent(SendRadius(&current_scan));
-  server.sendContent(SendHeight(&current_scan));
-  server.sendContent(SendRest());
-  server.sendContent("");
+  server.send(200, "text/html", SendHTML(&current_scan));
 }
 
 void server_NotFound(void) {
@@ -422,10 +421,10 @@ String SendHTML(scan_handle* xy) {
   ptr += "p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";  //Layout
   ptr += "</style>\n";
   ptr += "</head>\n";
-  ptr += "</body>\n";
-  ptr += "<h1>3D-Scanner</h1>\n";  //Webpage headings..
 
-  if (xy->state == INITIALISING) {
+  if (xy->state == INITIALISING) { 
+    ptr += "</body>\n";
+    ptr += "<h1>3D-Scanner</h1>\n";  //Webpage headings..
     ptr += "<h2>Please wait</h2>\n";
     ptr += "<h3>Initialising...</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
@@ -433,7 +432,9 @@ String SendHTML(scan_handle* xy) {
     ptr += "</html>\n";
   }
 
-  else if (xy->state == CALIBRATING) {
+  else if (xy->state == CALIBRATING) {  
+    ptr += "</body>\n";
+    ptr += "<h1>3D-Scanner</h1>\n";  //Webpage headings..
     ptr += "<h2>Please wait</h2>\n";
     ptr += "<h3>Calibrating...</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/\">Refresh</a>\n";
@@ -442,6 +443,8 @@ String SendHTML(scan_handle* xy) {
   }
 
   else if (xy->state == WAITING) {
+    ptr += "</body>\n";
+    ptr += "<h1>3D-Scanner</h1>\n";  //Webpage headings..
     ptr += "<h2>Calibration successfull!</h2>\n";
     ptr += "<h3>Start scan by pushing button</h3>\n";
     ptr += "<a class=\"button button-on\" href=\"/running\">Start Scan</a>\n";
@@ -450,6 +453,8 @@ String SendHTML(scan_handle* xy) {
   }
 
   else if (xy->state == RUNNING) {
+    ptr += "</body>\n";
+    ptr += "<h1>3D-Scanner</h1>\n";  //Webpage headings..
     ptr += "<h2>Scan running!</h2>\n";
     ptr += "<h3>Current Progress: ";
     ptr += xy->progress;
@@ -462,6 +467,11 @@ String SendHTML(scan_handle* xy) {
 
   else if (xy->state == FINISHED) {  // using /RunningScan
     xy->progress = 0;
+    ptr += SendAlpha(xy);
+    ptr += SendRadius(xy);
+    ptr += SendHeight(xy);
+    ptr += SendRest(); 
+
   }
 
   return ptr;
@@ -480,7 +490,10 @@ String SendHTML(scan_handle* xy) {
 
 String SendAlpha(scan_handle* xy) {
   uint amount_array_elements = (xy->index);
-  String rtn = "<h2>Scan finished</h2>\n";
+  
+  String rtn = "</body>\n";
+  rtn += "<h1>3D-Scanner</h1>\n";  //Webpage headings..
+  rtn += "<h2>Scan finished</h2>\n";
 
   rtn += "<p>Folgenden Code kopieren und in Matlab einfuegen:  </p>\n";
   rtn += "<p>load census; steps=200;</p>\n";
@@ -497,12 +510,12 @@ String SendAlpha(scan_handle* xy) {
       rtn += "]' * (pi/1800); </p>\n";  // divided by 10 due to information loss with integer processing
     }
   }
-
   return rtn;
 }
 
 String SendRadius(scan_handle* xy) {
   uint amount_array_elements = (xy->index);
+  
   String rtn = "<p>radius=[";
 
   for (uint i = 0; i < amount_array_elements; i++) {
@@ -516,12 +529,12 @@ String SendRadius(scan_handle* xy) {
       rtn += "]' * (1/10);</p>\n";  // divided by 10 due to information loss with integer processing
     }
   }
-
   return rtn;
 }
 
 String SendHeight(scan_handle* xy){
   uint amount_array_elements = (xy->index);
+
   String rtn = "<p>height=[";
 
   for (int i = 0; i < amount_array_elements; i++) {
@@ -534,13 +547,12 @@ String SendHeight(scan_handle* xy){
       rtn += "]';</p>\n";  // divided by 10 due to information loss with integer processing
     }
   }
-
   return rtn;
 }
 
 String SendRest(void){
-  String rtn = "<p>H=length(height)/steps;</p>\n";
 
+  String rtn = "<p>H=length(height)/steps;</p>\n";
   rtn += "<p>alpha2=zeros(H,steps);</p>\n";
   rtn += "<p>radius2=zeros(H,steps);</p>\n";
   rtn += "<p>height2=zeros(H,steps);</p>\n";
@@ -717,11 +729,13 @@ void check_scan_error(scan_handle* xy) {  // checks if error != 0, if yes displa
 
 void transmit_matlab_code(scan_handle* xy) {
 
-  //uint amount_array_elements = (sizeof(xy->alpha_mul_10)) / (sizeof(xy->alpha_mul_10[0]));  // data of alpha, radius and height has to be equal !
   uint amount_array_elements = xy->index;
+  Serial.println(" ");
+  Serial.println(" ");
   Serial.println(" ");
   Serial.println("Folgenden Code kopieren und in Matlab einfuegen:");
   Serial.println(" ");
+  Serial.println("load census; steps=200; ");
 
   Serial.print("alpha=[");
   for (uint i = 0; i < amount_array_elements; i++) {
@@ -759,11 +773,44 @@ void transmit_matlab_code(scan_handle* xy) {
   }
   Serial.println("");
 
-  Serial.println("[x y z] = pol2cart(alpha,radius,height);");
-  Serial.println("plot3(x,y,z);");
-  Serial.println(" ");
-  Serial.println(" ");
-  Serial.println(" ");
+  //Serial.println("[x y z] = pol2cart(alpha,radius,height);");
+  //Serial.println("plot3(x,y,z);");
+  Serial.println("H=length(height)/steps;");
+  Serial.println("alpha2=zeros(H,steps);");
+  Serial.println("radius2=zeros(H,steps);");
+  Serial.println("height2=zeros(H,steps);");
+  Serial.println("g=zeros(H,steps);");
+  Serial.println("alpha3=zeros(H,steps+1);");
+  Serial.println("radius3=zeros(H,steps+1);");
+  Serial.println("height3=zeros(H,steps+1);");
+  Serial.println("p=0.95;");
+  Serial.println("xxi=(0:2*pi/steps:(2*pi-(2*pi/steps)));");
+  Serial.println("for i=1:H");
+  Serial.println("for j=1:steps");
+  Serial.println("alpha2(i,j)=alpha(j+(i-1)*steps,1);");
+  Serial.println("radius2(i,j)=radius(j+(i-1)*steps,1);");
+  Serial.println("height2(i,j)=height(j+(i-1)*steps,1);");
+  Serial.println("end");
+  Serial.println("end");
+  Serial.println("for i=1:1:H");
+  Serial.println("g(i,:)=csaps(alpha2(i,:), radius2(i,:), p, xxi);");
+  Serial.println("end");
+  Serial.println("alpha3(:,steps+1)=alpha2(:,1);");
+  Serial.println("radius3(:,steps+1)=g(:,1);");
+  Serial.println("height3(:,steps+1)=height2(:,1);");
+  Serial.println("for i=1:H");
+  Serial.println("for j=1:steps");
+  Serial.println("alpha3(i,j)=alpha2(i,j);");
+  Serial.println("radius3(i,j)=g(i,j);");
+  Serial.println("height3(i,j)=height2(i,j);");
+  Serial.println("end");
+  Serial.println("end");
+  Serial.println("[x,y,z]=pol2cart(alpha3,radius3,height3);");
+  Serial.println("surf (x,y,z)");
+  Serial.println("");
+  Serial.println("");
+  Serial.println("");
+
 }
 
 
